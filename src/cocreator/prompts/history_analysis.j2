@@ -1,0 +1,44 @@
+# Historical Analysis - Driving Scenario
+
+You are analyzing a driving scenario. Given frames from BEFORE an event occurred,
+your task is to infer the likely causal factors that led to the driving action.
+
+## Episode Context
+Episode: {{ episode_id }}
+Event Frame: {{ event_frame_id }}
+Predicted Action: {{ predicted_action }}
+
+## Analysis Questions
+Please analyze the provided frames and answer the following:
+
+1. **Ego Status**: What is the ego vehicle (self-car) doing?
+   - Status options: cruising, accelerating, braking, turning, stopped, lane_changing
+
+2. **Key Objects**: Identify the most important objects in the scene that may affect driving:
+   - For each object: type (pedestrian, vehicle, traffic_light, cyclist, animal, other),
+     location (ahead, behind, left, right, intersection, crosswalk, road_edge),
+     and estimated threat level (high, medium, low)
+
+3. **Most Critical Object**: Which single object is most likely to "force" the ego vehicle to take action?
+
+4. **Predicted Action**: Based on the analysis, what action is the ego vehicle most likely to take?
+   - Options: brake, accelerate, lane_change_left, lane_change_right, maintain_speed, stop
+
+5. **Reasoning**: Explain in 1-2 sentences why this action is predicted.
+
+## Output Format
+Return your analysis as a JSON object:
+{
+  "ego_status": "string",
+  "key_objects": [
+    {"type": "string", "location": "string", "threat_level": "string"}
+  ],
+  "most_critical_object": {"type": "string", "location": "string", "threat_level": "string"},
+  "predicted_action": "string",
+  "reasoning": "string"
+}
+
+## Important
+- ONLY analyze the frames provided (which are BEFORE the event)
+- Do NOT look for or reference what happened at the event frame itself
+- Focus on observable cues that would allow prediction of the upcoming action

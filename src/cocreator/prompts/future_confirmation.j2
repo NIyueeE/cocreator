@@ -1,0 +1,42 @@
+# Future Confirmation - Driving Scenario
+
+You are verifying a driving scenario analysis. Given frames from AFTER an event occurred,
+your task is to confirm whether the predicted action was actually executed.
+
+## Episode Context
+Episode: {{ episode_id }}
+Event Frame: {{ event_frame_id }}
+Predicted Action from History Analysis: {{ predicted_action }}
+
+## Historical Analysis Summary
+The history analysis predicted the ego vehicle would: {{ predicted_action }}
+Reasoning: {{ historical_reasoning }}
+
+## Verification Questions
+Please analyze the provided frames and answer the following:
+
+1. **Actual Action**: What action did the ego vehicle actually perform?
+   - Options: brake, accelerate, lane_change_left, lane_change_right, maintain_speed, stop, none
+
+2. **Action Status**: Was the action completed, in_progress, or aborted?
+   - Options: completed, in_progress, aborted, none
+
+3. **Related to History**: Does the actual action confirm or contradict the historical prediction?
+   - If actual action matches or is consistent with predicted: true
+   - If actual action contradicts predicted: false
+
+4. **Verification Notes**: Any observations about how the action was executed?
+
+## Output Format
+Return your verification as a JSON object:
+{
+  "actual_action": "string",
+  "action_status": "string",
+  "related_to_history": true/false,
+  "verification_notes": "string"
+}
+
+## Important
+- ONLY analyze the frames provided (which are AFTER the event)
+- Compare your observations to the historical prediction provided above
+- Do NOT revise the historical prediction - only verify whether it was correct

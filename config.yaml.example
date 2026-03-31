@@ -1,0 +1,57 @@
+# CoCreator Configuration Example
+# Copy this file to config.yaml and modify as needed
+
+# VLM (Vision Language Model) Configuration
+# Only base_url and api_key are required - supports any OpenAI-compatible API
+vlm:
+  # API endpoint (note: do NOT include /v1 suffix)
+  base_url: "https://api.siliconflow.cn"
+
+  # API key - use ${ENV_VAR} syntax to load from environment
+  api_key: "${SILICONFLOW_API_KEY}"
+
+  # Model name - check your provider's available models
+  model: "Qwen/Qwen2.5-72B-Instruct"
+
+# Rate Limiting Configuration
+rate_limit:
+  # Requests per minute (RPM) - adjust based on your API tier
+  rpm: 500
+
+  # Tokens per minute (TPM) - adjust based on your API tier
+  tpm: 2000000
+
+  # Maximum concurrent requests
+  concurrency: 20
+
+# Pipeline Configuration
+pipeline:
+  # Path to action_info directory containing position vectors
+  # Structure: {dataset_path}/{episode_id}/frame_{id}.txt
+  dataset_path: "/data/CoCreator/dataset/drivingdojo_mini/action_info"
+
+  # Path to videos directory containing frame images
+  # Structure: {videos_path}/{episode_id}/frame_{id}.jpg
+  videos_path: "/data/CoCreator/dataset/drivingdojo_mini/videos"
+
+  # Output directory for JSONL files
+  output_dir: "./output"
+
+  # Number of historical segments to analyze (before event)
+  history_segments: 3
+
+  # Number of future segments to confirm (after event)
+  future_segments: 2
+
+  # Number of frames per segment
+  frames_per_segment: 5
+
+  # Anomaly detection threshold (standard deviations above mean)
+  # Lower = more sensitive (more events), Higher = less sensitive (fewer events)
+  anomaly_threshold: 2.0
+
+  # Maximum retry attempts for API calls
+  retry_max_attempts: 3
+
+  # Exponential backoff factor for retries
+  retry_backoff_factor: 2.0

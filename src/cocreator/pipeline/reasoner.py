@@ -5,6 +5,7 @@ Strict data isolation enforced between stages.
 """
 
 import json
+import re
 from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
 
@@ -18,6 +19,52 @@ from ..schemas import (
 )
 from ..providers.openai_compatible import OpenAICompatibleProvider
 from .extractor import VideoFrameExtractor
+
+
+def _extract_json_from_response(response: str) -> dict:
+    """Extract JSON from VLM response, handling markdown code blocks.
+    
+    VLM may return JSON wrapped in markdown code blocks like:
+    ```json
+    {"key": "value"}
+    ```
+    Or as plain JSON text.
+    
+    Args:
+        response: Raw VLM response string
+        
+    Returns:
+        Parsed JSON as dict
+        
+    Raises:
+        json.JSONDecodeError: If no valid JSON found
+    """
+    response = response.strip()
+    
+    # Try to extract JSON from markdown code block
+    # Pattern matches ```json ... ``` or ``` ... ```
+    code_block_pattern = r'```(?:json)?\s*\n?(.*?)\n?```'
+    matches = re.findall(code_block_pattern, response, re.DOTALL)
+    
+    for match in matches:
+        try:
+            return json.loads(match.strip())
+        except json.JSONDecodeError:
+            continue
+    
+    # Try to find JSON between curly braces
+    # Look for content that starts with { and ends with }
+    json_pattern = r'(\{.*\})'
+    matches = re.findall(json_pattern, response, re.DOTALL)
+    
+    for match in matches:
+        try:
+            return json.loads(match.strip())
+        except json.JSONDecodeError:
+            continue
+    
+    # If no JSON found in code blocks or braces, try parsing the whole response
+    return json.loads(response)
 
 
 class CausalReasoner:
@@ -104,24 +151,23 @@ class CausalReasoner:
         # System message
         system_message = {
             "role": "system",
-            "content": "You are a driving scenario analyst. Analyze the provided frames and respond with ONLY valid JSON.",
+            "content": "You are a driving scenario analyst. Respond with ONLY valid JSON matching the requested schema.",
         }
 
         # User message with prompt
         user_message = {
             "role": "user",
-            "content": prompt + "\n\nPlease analyze the following frames:",
+            "content": prompt + "\n\nPlease analyze the following frames. Return ONLY valid JSON.",
         }
 
         # Call VLM with images
         response = await self.provider.chat_with_images(
             image_paths=history_frames,
             messages=[system_message, user_message],
-            response_format={"type": "json_object"},
         )
 
-        # Parse JSON response
-        result = json.loads(response)
+        # Parse JSON response (handle markdown code blocks)
+        result = _extract_json_from_response(response)
 
         # Build HistoricalAnalysis
         key_objects = [
@@ -180,24 +226,23 @@ class CausalReasoner:
         # System message
         system_message = {
             "role": "system",
-            "content": "You are a driving scenario verifier. Analyze the provided frames and respond with ONLY valid JSON.",
+            "content": "You are a driving scenario verifier. Respond with ONLY valid JSON matching the requested schema.",
         }
 
         # User message with prompt
         user_message = {
             "role": "user",
-            "content": prompt + "\n\nPlease verify the following frames:",
+            "content": prompt + "\n\nPlease verify the following frames. Return ONLY valid JSON.",
         }
 
         # Call VLM with images
         response = await self.provider.chat_with_images(
             image_paths=future_frames,
             messages=[system_message, user_message],
-            response_format={"type": "json_object"},
         )
 
-        # Parse JSON response
-        result = json.loads(response)
+        # Parse JSON response (handle markdown code blocks)
+        result = _extract_json_from_response(response)
 
         return FutureConfirmation(
             actual_action=result.get("actual_action", "none"),

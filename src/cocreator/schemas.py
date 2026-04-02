@@ -17,11 +17,13 @@ class VLMConfig(BaseModel):
             Note: no /v1 suffix - the provider appends it.
         api_key: API key for authentication.
         model: Model identifier for the VLM.
+        timeout: Request timeout in seconds.
     """
 
     base_url: str = "https://api.siliconflow.cn"
     api_key: str = ""
     model: str = "Qwen/Qwen2.5-72B-Instruct"
+    timeout: float = 120.0
 
 
 class RateLimitConfig(BaseModel):
@@ -51,6 +53,9 @@ class PipelineConfig(BaseModel):
         anomaly_threshold: Threshold for anomaly detection.
         retry_max_attempts: Maximum retry attempts on failure.
         retry_backoff_factor: Backoff multiplier for retries.
+        min_event_interval: Minimum frame interval between events (deduplication).
+        steering_threshold: Angular threshold (degrees) for steering detection.
+        merge_adjacent_events: Whether to merge adjacent events within interval.
     """
 
     dataset_path: str = ""
@@ -62,6 +67,9 @@ class PipelineConfig(BaseModel):
     anomaly_threshold: float = 2.0
     retry_max_attempts: int = 3
     retry_backoff_factor: float = 2.0
+    min_event_interval: int = 5
+    steering_threshold: float = 15.0
+    merge_adjacent_events: bool = True
 
 
 class AppConfig(BaseModel):

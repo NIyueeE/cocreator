@@ -29,7 +29,11 @@ cocreator/
 │   ├── pipeline/
 │   │   ├── detector.py     # 事件检测模块
 │   │   ├── reasoner.py     # 因果推理模块
-│   │   └── extractor.py    # 数据提取模块
+│   │   ├── extractor.py    # 数据提取模块
+│   │   └── progress_tracker.py  # 断点续跑
+│   ├── prompts/
+│   │   ├── history_analysis.j2  # 历史分析 prompt 模板
+│   │   └── future_confirmation.j2  # 未来确认 prompt 模板
 │   └── providers/
 │       └── openai_compatible.py  # VLM 提供者
 ├── config.yaml.example     # 配置示例
@@ -92,11 +96,16 @@ cocreator detect -c <配置文件> -o <输出文件>
 |------|------|------|
 | `-c, --config` | 是 | YAML 配置文件路径 |
 | `-o, --output` | 是 | 输出 JSONL 文件路径 |
+| `--episode-id` | 否 | 仅处理指定 episode |
 
 **示例：**
 
 ```bash
+# 处理所有 episode
 cocreator detect -c config.yaml -o output/events.jsonl
+
+# 处理单个 episode
+cocreator detect -c config.yaml -o output/events.jsonl --episode-id episode_001
 ```
 
 ### reason - 因果推理
@@ -109,11 +118,13 @@ cocreator reason -c <配置文件> -e <事件文件> -o <输出文件>
 
 **参数说明：**
 
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `-c, --config` | 是 | YAML 配置文件路径 |
-| `-e, --events` | 是 | 输入的 JSONL 事件文件 |
-| `-o, --output` | 是 | 输出 JSONL 因果链文件 |
+| 参数 | 必填 | 默认值 | 说明 |
+|------|------|--------|------|
+| `-c, --config` | 是 | - | YAML 配置文件路径 |
+| `-e, --events` | 是 | - | 输入的 JSONL 事件文件 |
+| `-o, --output` | 是 | - | 输出 JSONL 因果链文件 |
+| `--max-events` | 否 | 全部 | 仅处理前 N 个事件 |
+| `--resume` | 否 | true | 从上次进度继续 |
 
 **示例：**
 
@@ -152,6 +163,7 @@ vlm:
   base_url: "https://api.siliconflow.cn"
   api_key: "${SILICONFLOW_API_KEY}"
   model: "Qwen/Qwen3.5-397B-A17B"
+  timeout: 120.0
 
 rate_limit:
   rpm: 500
@@ -166,6 +178,9 @@ pipeline:
   future_segments: 2
   frames_per_segment: 5
   anomaly_threshold: 2.0
+  min_event_interval: 5
+  steering_threshold: 15.0
+  merge_adjacent_events: true
   retry_max_attempts: 3
   retry_backoff_factor: 2.0
 ```
@@ -176,7 +191,7 @@ pipeline:
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `base_url` | `https://api.siliconflow.cn` | API 地址（注意：不包含 /v1） |
+| `base_url` | `https://api.siliconflow.cn` | API 地址（/v1 后缀自动补全） |
 | `api_key` | 空 | API 密钥，支持 `${ENV_VAR}` 语法 |
 | `model` | `Qwen/Qwen3.5-397B-A17B` | 模型名称 |
 
@@ -185,7 +200,7 @@ pipeline:
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
 | `rpm` | 500 | 每分钟请求数限制 |
-| `tpm` | 100000 | 每分钟 token 数限制 |
+| `tpm` | 2000000 | 每分钟 token 数限制 |
 | `concurrency` | 20 | 最大并发请求数 |
 
 #### 流水线配置 (`pipeline`)
@@ -199,6 +214,9 @@ pipeline:
 | `future_segments` | 2 | 未来片段数（事件后） |
 | `frames_per_segment` | 5 | 每个片段的帧数 |
 | `anomaly_threshold` | 2.0 | 异常检测的标准差倍数 |
+| `min_event_interval` | 5 | 事件间最小帧间隔（去重） |
+| `steering_threshold` | 15.0 | 转向检测角度阈值（度） |
+| `merge_adjacent_events` | true | 是否合并相邻事件 |
 | `retry_max_attempts` | 3 | API 调用最大重试次数 |
 | `retry_backoff_factor` | 2.0 | 指数退避因子 |
 
@@ -320,3 +338,28 @@ cocreator review -i chains.jsonl -n 50 -o report.md
 **Q: 支持批量处理吗？**
 
 是的，通过 `detect` 命令自动处理 `dataset_path` 下的所有 episode。
+
+**Q: 支持哪些 VLM 后端？**
+
+任何 OpenAI 兼容的 API 均可（SiliconFlow、DashScope、Ollama 等）。`base_url` 的 `/v1` 后缀会自动补全，无需手动添加。
+
+**Q: reason 命令耗时很长怎么办？**
+
+VLM 视觉模型处理单条因果链约需 2-4 分钟。使用 `--max-events` 限制数量，或中断后通过 `--resume` 继续。
+
+## 开发
+
+```bash
+# 安装依赖
+uv sync
+
+# 代码检查
+uv run ruff check src/ tests/
+uv run ty check src/
+
+# 运行测试
+uv run pytest tests/ -v
+
+# 运行集成测试（smoke tests）
+uv run pytest tests/ --run-smoke -v
+```

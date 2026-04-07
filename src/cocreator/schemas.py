@@ -22,7 +22,7 @@ class VLMConfig(BaseModel):
 
     base_url: str = "https://api.siliconflow.cn"
     api_key: str = ""
-    model: str = "Qwen/Qwen2.5-72B-Instruct"
+    model: str = "Qwen/Qwen3.5-397B-A17B"
     timeout: float = 120.0
 
 

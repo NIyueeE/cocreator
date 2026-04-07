@@ -76,6 +76,8 @@ class VideoFrameExtractor(FrameExtractor):
 
     def _list_episode_frames(self, episode_id: str) -> list[tuple[int, Path]]:
         episode_dir = self.videos_path / episode_id
+        if not episode_dir.exists():
+            raise ValueError(f"Episode directory not found: {episode_dir}")
         frames = []
         for file_path in episode_dir.iterdir():
             if file_path.suffix == ".jpg":

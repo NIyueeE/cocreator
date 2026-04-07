@@ -19,7 +19,7 @@ from cocreator.schemas import (
 def test_vlm_config_defaults():
     config = VLMConfig()
     assert config.base_url == "https://api.siliconflow.cn"
-    assert config.model == "Qwen/Qwen2.5-72B-Instruct"
+    assert config.model == "Qwen/Qwen3.5-397B-A17B"
 
 
 def test_vlm_config_custom():

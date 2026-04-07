@@ -17,11 +17,11 @@ pipeline/
 ## WHERE TO LOOK
 | Task | Location | Key Function |
 |------|----------|-------------|
-| Anomaly detection | `detector.py:26` | `EventDetector.detect()` |
-| History frames | `extractor.py:92` | `get_history_frames()` |
-| Future frames | `extractor.py:136` | `get_future_frames()` |
-| VLM reasoning | `reasoner.py:49` | `CausalReasoner.reason()` |
-| Data isolation | `extractor.py:180` | `_validate_no_leakage()` |
+| Anomaly detection | `detector.py:28` | `EventDetector.detect()` |
+| History frames | `extractor.py:89` | `get_history_frames()` |
+| Future frames | `extractor.py:100` | `get_future_frames()` |
+| VLM reasoning | `reasoner.py:70` | `CausalReasoner.reason()` |
+| Data isolation | `extractor.py:110` | `_validate_no_leakage()` |
 
 ## CONVENTIONS
 - **Data isolation STRICT**: `_analyze_history()` only sees past frames; `_confirm_future()` only sees future frames

@@ -13,6 +13,7 @@ from cocreator.pipeline.extractor import VideoFrameExtractor
 from cocreator.pipeline.progress_tracker import ProgressTracker
 
 
+@pytest.mark.smoke
 class TestEventDetectorIntegration:
     """Test EventDetector with mocked data."""
 
@@ -54,6 +55,7 @@ class TestEventDetectorIntegration:
             assert event.action_type in ["hard_brake", "acceleration"]
 
 
+@pytest.mark.smoke
 class TestProgressTrackerIntegration:
     """Test ProgressTracker file operations."""
 
@@ -83,6 +85,7 @@ class TestProgressTrackerIntegration:
         assert tracker2.total_processed == 2
 
 
+@pytest.mark.smoke
 class TestFrameExtractorIntegration:
     """Test FrameExtractor with mocked video files."""
 

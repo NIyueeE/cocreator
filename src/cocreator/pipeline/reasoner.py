@@ -52,18 +52,21 @@ def _extract_json_from_response(response: str) -> dict:
         except json.JSONDecodeError:
             continue
     
-    # Try to find JSON between curly braces
-    # Look for content that starts with { and ends with }
-    json_pattern = r'(\{.*\})'
-    matches = re.findall(json_pattern, response, re.DOTALL)
-    
-    for match in matches:
-        try:
-            return json.loads(match.strip())
-        except json.JSONDecodeError:
-            continue
-    
-    # If no JSON found in code blocks or braces, try parsing the whole response
+    depth = 0
+    start = -1
+    for i, ch in enumerate(response):
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0 and start >= 0:
+                try:
+                    return json.loads(response[start:i + 1])
+                except json.JSONDecodeError:
+                    start = -1
+
     return json.loads(response)
 
 

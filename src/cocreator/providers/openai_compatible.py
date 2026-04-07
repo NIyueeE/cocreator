@@ -52,13 +52,17 @@ class OpenAICompatibleProvider:
     def __init__(self, vlm_config: VLMConfig, rate_limit_config: RateLimitConfig):
         self.vlm_config = vlm_config
         self.rate_limit_config = rate_limit_config
+        base_url = vlm_config.base_url.rstrip("/")
+        if not base_url.endswith("/v1"):
+            base_url += "/v1"
         self._client = AsyncOpenAI(
-            base_url=vlm_config.base_url,
+            base_url=base_url,
             api_key=vlm_config.api_key,
             timeout=httpx.Timeout(vlm_config.timeout),
         )
         self._semaphore = asyncio.Semaphore(rate_limit_config.concurrency)
 
+    @retry_with_backoff(max_attempts=3, backoff_factor=2.0, initial_delay=1.0)
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -77,18 +81,15 @@ class OpenAICompatibleProvider:
             The VLM's response text
         """
         async with self._semaphore:
-            try:
-                create_kwargs: dict[str, Any] = {
-                    "model": self.vlm_config.model,
-                    "messages": messages,
-                    **kwargs
-                }
-                if response_format is not None:
-                    create_kwargs["response_format"] = response_format
-                response = await self._client.chat.completions.create(**create_kwargs)
-                return response.choices[0].message.content or ""
-            except Exception:
-                raise
+            create_kwargs: dict[str, Any] = {
+                "model": self.vlm_config.model,
+                "messages": messages,
+                **kwargs
+            }
+            if response_format is not None:
+                create_kwargs["response_format"] = response_format
+            response = await self._client.chat.completions.create(**create_kwargs)
+            return response.choices[0].message.content or ""
 
     async def chat_with_images(
         self,

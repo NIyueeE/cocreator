@@ -169,6 +169,11 @@ class CausalReasoner:
             messages=[system_message, user_message],
         )
 
+        # DEBUG: print raw VLM response
+        print(f"\n[DEBUG] _analyze_history raw response ({len(response)} chars):")
+        print(f"{response[:1500]}\n")
+        print("[DEBUG] --- end raw response ---\n")
+
         # Parse JSON response (handle markdown code blocks)
         result = _extract_json_from_response(response)
 
@@ -243,6 +248,11 @@ class CausalReasoner:
             image_paths=future_frames,
             messages=[system_message, user_message],
         )
+
+        # DEBUG: print raw VLM response
+        print(f"\n[DEBUG] _confirm_future raw response ({len(response)} chars):")
+        print(f"{response[:1500]}\n")
+        print("[DEBUG] --- end raw response ---\n")
 
         # Parse JSON response (handle markdown code blocks)
         result = _extract_json_from_response(response)

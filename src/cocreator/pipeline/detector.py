@@ -4,7 +4,6 @@ Detects anomalous events from trajectory, velocity, and directional data.
 Implements event deduplication and clustering for robust detection.
 """
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
@@ -98,9 +97,11 @@ class EventDetector:
             with open(pos_file, "r") as f:
                 line = f.read().strip()
                 if line:
-                    coords = re.findall(r"-?\d+\.?\d*", line)
-                    if len(coords) >= 3:
-                        positions.append([float(coords[0]), float(coords[1]), float(coords[2])])
+                    # Parse: strip brackets, split by whitespace, convert to float
+                    # Handles both decimal (0.015) and scientific notation (1.23e-02)
+                    tokens = line.strip("[]").strip().split()
+                    if len(tokens) >= 3:
+                        positions.append([float(tokens[0]), float(tokens[1]), float(tokens[2])])
                         frame_ids.append(pos_file.stem)
 
         return np.array(positions), frame_ids

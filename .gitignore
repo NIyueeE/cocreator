@@ -12,5 +12,8 @@ wheels/
 # dataset
 dataset
 
-# opencode
-AGENTS.md
+# local
+config.yaml
+
+output
+test*

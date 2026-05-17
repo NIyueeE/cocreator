@@ -4,6 +4,7 @@ Extracts historical and future frames around events for analysis.
 Enforces strict temporal isolation between historical and future frames.
 """
 
+import logging
 from pathlib import Path
 from typing import Protocol
 
@@ -93,8 +94,11 @@ class VideoFrameExtractor(FrameExtractor):
         all_frames = self._list_episode_frames(episode_id)
         history = [(num, path) for num, path in all_frames if num < event_num]
         if len(history) < count:
-            raise ValueError(f"Not enough history frames: requested {count}, got {len(history)}")
-        result = [str(path) for _, path in history[-count:]]
+            logging.warning(
+                "Not enough history frames for %s/%s: requested %d, got %d, using %d",
+                episode_id, event_frame_id, count, len(history), len(history),
+            )
+        result = [str(path) for _, path in history[-min(count, len(history)):]]
         result.reverse()
         self._validate_no_leakage(episode_id, event_frame_id, result, is_history=True)
         return result
@@ -104,8 +108,11 @@ class VideoFrameExtractor(FrameExtractor):
         all_frames = self._list_episode_frames(episode_id)
         future = [(num, path) for num, path in all_frames if num > event_num]
         if len(future) < count:
-            raise ValueError(f"Not enough future frames: requested {count}, got {len(future)}")
-        result = [str(path) for _, path in future[:count]]
+            logging.warning(
+                "Not enough future frames for %s/%s: requested %d, got %d, using %d",
+                episode_id, event_frame_id, count, len(future), len(future),
+            )
+        result = [str(path) for _, path in future[:min(count, len(future))]]
         self._validate_no_leakage(episode_id, event_frame_id, result, is_history=False)
         return result
 

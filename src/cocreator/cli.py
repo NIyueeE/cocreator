@@ -12,6 +12,7 @@ try:
 except ImportError:
     async_tqdm: Any = None
 
+import traceback
 from .config import load_config
 from .schemas import DetectedEvent, CausalChain
 from .pipeline.detector import EventDetector
@@ -133,20 +134,30 @@ def reason(
         else:
             remaining = events_list
 
-        # Process events with progress bar
-        chains = []
-        if async_tqdm is not None:
-            iterator = async_tqdm(remaining, desc="Reasoning")
-        else:
-            iterator = remaining
+        # Process events concurrently (respect rate_limit.concurrency)
+        total = len(remaining)
+        sem = asyncio.Semaphore(config_obj.rate_limit.concurrency)
+        typer.echo(f"Processing {total} events, concurrency={config_obj.rate_limit.concurrency}...")
 
-        for event in iterator:
-            try:
+        async def process_one(event: DetectedEvent) -> CausalChain:
+            async with sem:
                 chain = await reasoner.reason(event.episode_id, event)
-                chains.append(chain)
                 progress_tracker.mark_processed_sync(event.episode_id, event.frame_id)
-            except Exception as e:
-                typer.echo(f"Error processing {event.episode_id}/{event.frame_id}: {e}", err=True)
+                return chain
+
+        results = await asyncio.gather(
+            *[process_one(e) for e in remaining],
+            return_exceptions=True,
+        )
+        chains = []
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                typer.echo(f"Error [{remaining[i].episode_id}/{remaining[i].frame_id}]: {r}", err=True)
+                traceback.print_exc()
+            else:
+                chains.append(r)
+
+        typer.echo(f"  ✓ {len(chains)}/{total} completed")
 
         await provider.close()
         return chains

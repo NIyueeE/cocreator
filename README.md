@@ -75,9 +75,8 @@ export COCREATOR_VLM__API_KEY="your-api-key"
 ### 运行检测
 
 ```bash
-cocreator detect -c config.yaml -o output/events.jsonl
+cocreator detect -c config.yaml -o output/events
 ```
-
 ## 使用指南
 
 CoCreator 提供三个主要命令：
@@ -87,7 +86,7 @@ CoCreator 提供三个主要命令：
 检测驾驶数据中的异常事件。
 
 ```bash
-cocreator detect -c <配置文件> -o <输出文件>
+cocreator detect -c <配置文件> -o <输出目录>
 ```
 
 **参数说明：**
@@ -95,17 +94,17 @@ cocreator detect -c <配置文件> -o <输出文件>
 | 参数 | 必填 | 说明 |
 |------|------|------|
 | `-c, --config` | 是 | YAML 配置文件路径 |
-| `-o, --output` | 是 | 输出 JSONL 文件路径 |
+| `-o, --output` | 是 | 输出目录（每事件一个 JSON 文件） |
 | `--episode-id` | 否 | 仅处理指定 episode |
 
 **示例：**
 
 ```bash
 # 处理所有 episode
-cocreator detect -c config.yaml -o output/events.jsonl
+cocreator detect -c config.yaml -o output/events
 
 # 处理单个 episode
-cocreator detect -c config.yaml -o output/events.jsonl --episode-id episode_001
+cocreator detect -c config.yaml -o output/events --episode-id episode_001
 ```
 
 ### reason - 因果推理
@@ -113,7 +112,7 @@ cocreator detect -c config.yaml -o output/events.jsonl --episode-id episode_001
 为检测到的事件生成因果链。
 
 ```bash
-cocreator reason -c <配置文件> -e <事件文件> -o <输出文件>
+cocreator reason -c <配置文件> -e <事件目录> -o <输出目录>
 ```
 
 **参数说明：**
@@ -121,37 +120,38 @@ cocreator reason -c <配置文件> -e <事件文件> -o <输出文件>
 | 参数 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
 | `-c, --config` | 是 | - | YAML 配置文件路径 |
-| `-e, --events` | 是 | - | 输入的 JSONL 事件文件 |
-| `-o, --output` | 是 | - | 输出 JSONL 因果链文件 |
+| `-e, --events` | 是 | - | 输入事件目录（detect 输出） |
+| `-o, --output` | 是 | - | 输出因果链目录（每链一个 JSON 文件） |
 | `--max-events` | 否 | 全部 | 仅处理前 N 个事件 |
 | `--resume` | 否 | true | 从上次进度继续 |
 
 **示例：**
 
 ```bash
-cocreator reason -c config.yaml -e output/events.jsonl -o output/chains.jsonl
+cocreator reason -c config.yaml -e output/events -o output/chains
 ```
 
 ### review - 报告生成
 
-从因果链生成 Markdown 报告。
+从因果链生成 PDF 报告（含帧图像和分析文本）。
 
 ```bash
-cocreator review -i <因果链文件> -n <数量> -o <输出文件>
+cocreator review -c <配置文件> -i <因果链目录> -n <数量> -o <输出文件>
 ```
 
 **参数说明：**
 
 | 参数 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
-| `-i, --input` | 是 | - | 输入的 JSONL 因果链文件 |
+| `-c, --config` | 是 | - | YAML 配置文件路径 |
+| `-i, --input` | 是 | - | 输入因果链目录（reason 输出） |
 | `-n, --count` | 否 | 10 | 报告中包含的因果链数量 |
-| `-o, --output` | 否 | 标准输出 | 输出 Markdown 文件路径 |
+| `-o, --output` | 是 | - | 输出 PDF 文件路径 |
 
 **示例：**
 
 ```bash
-cocreator review -i output/chains.jsonl -n 20 -o output/report.md
+cocreator review -c config.yaml -i output/chains -n 20 -o output/report.pdf
 ```
 
 ## 配置说明
@@ -232,24 +232,24 @@ api_key: "${SILICONFLOW_API_KEY}"
 
 ## 输出格式
 
-### 事件格式 (JSONL)
+### 事件格式 (JSON)
 
 ```json
 {
   "episode_id": "episode_001",
   "frame_id": "frame_150",
-  "action_type": "hard_brake",
-  "confidence": 0.95
+  "action_type": "hard_brake"
 }
 ```
 
-### 因果链格式 (JSONL)
+### 因果链格式 (JSON)
 
 ```json
 {
   "episode_id": "episode_001",
   "event_frame_id": "frame_150",
-  "confidence": 0.85,
+  "frame_ids": ["0050", "0052", "0054"],
+  "causal_text": "The ego vehicle was cruising...",
   "historical_analysis": {
     "ego_status": "cruising",
     "key_objects": [
@@ -267,40 +267,6 @@ api_key: "${SILICONFLOW_API_KEY}"
 }
 ```
 
-### 报告格式 (Markdown)
+### 报告格式 (PDF)
 
-```markdown
-# Causal Chain Report
-
-Generated from 10 causal chains.
-
-## Chain 1: Episode episode_001 - Frame frame_150
-
-**Confidence:** 85.00%
-
-### Historical Analysis
-- Ego Status: cruising
-- Predicted Action: brake
-- Critical Object: pedestrian at crosswalk
-
-### Future Confirmation
-- Actual Action: brake
-- Action Status: completed
-- Related to History: true
-
-### Causal Link
-行人在人行横道上突然出现，导致驾驶员紧急制动。
-
----
-```
-
-## 抽检报告
-
-本工具生成的抽检报告适用于以下场景：
-
-- 驾驶行为分析研究
-- 异常事件统计与归因
-- 事故致因分析
-- 自动驾驶系统评估
-
-报告中的置信度得分反映模型对因果链的判断准确度，建议优先关注高置信度（>80%）的案例。
+PDF 报告每页包含：帧图像（历史帧带蓝色边框，未来帧带绿色边框）和因果分析文本。

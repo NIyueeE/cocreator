@@ -37,7 +37,7 @@ def test_rate_limit_defaults():
 def test_pipeline_config_defaults():
     config = PipelineConfig()
     assert config.anomaly_threshold == 2.0
-    assert config.history_segments == 3
+    assert config.history_frames == 7
 
 
 def test_pipeline_config_custom():
@@ -48,11 +48,10 @@ def test_pipeline_config_custom():
 
 def test_detected_event_creation():
     event = DetectedEvent(
-        episode_id="ep001", frame_id="frame_100", action_type="hard_brake", confidence=0.95
+        episode_id="ep001", frame_id="frame_100", action_type="hard_brake"
     )
     assert event.episode_id == "ep001"
     assert event.action_type == "hard_brake"
-    assert event.confidence == 0.95
 
 
 def test_detected_event_json_serialization():
@@ -102,46 +101,28 @@ def test_future_confirmation_creation():
 
 
 def test_causal_chain_creation():
-    obj = KeyObject(type="vehicle", location="ahead", threat_level="high")
-    analysis = HistoricalAnalysis(
-        ego_status="cruising", key_objects=[obj], predicted_action="brake"
-    )
-    confirmation = FutureConfirmation(
-        actual_action="brake", action_status="completed", related_to_history=True
-    )
     chain = CausalChain(
         episode_id="ep001",
         event_frame_id="frame_100",
-        confidence=0.85,
-        historical_analysis=analysis,
-        future_confirmation=confirmation,
-        causal_link="Vehicle ahead caused braking",
+        frame_ids=["0090", "0095", "0105", "0110"],
+        causal_text="The ego vehicle was cruising. It predicted brake.",
     )
     assert chain.episode_id == "ep001"
-    assert chain.confidence == 0.85
-    assert chain.causal_link == "Vehicle ahead caused braking"
+    assert chain.frame_ids == ["0090", "0095", "0105", "0110"]
+    assert chain.causal_text
 
 
 def test_causal_chain_json_serialization():
-    obj = KeyObject(type="vehicle", location="ahead", threat_level="high")
-    analysis = HistoricalAnalysis(
-        ego_status="cruising", key_objects=[obj], predicted_action="brake"
-    )
-    confirmation = FutureConfirmation(
-        actual_action="brake", action_status="completed", related_to_history=True
-    )
     chain = CausalChain(
         episode_id="ep001",
         event_frame_id="frame_100",
-        confidence=0.85,
-        historical_analysis=analysis,
-        future_confirmation=confirmation,
-        causal_link="Vehicle ahead caused braking",
+        frame_ids=["0090", "0095"],
+        causal_text="The ego vehicle was cruising.",
     )
     json_str = chain.model_dump_json()
     assert "ep001" in json_str
     assert "cruising" in json_str
-    assert "brake" in json_str
+    assert "0090" in json_str
 
 
 def test_app_config_defaults():

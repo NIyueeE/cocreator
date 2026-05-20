@@ -6,7 +6,7 @@ import pytest
 import os
 from pathlib import Path
 
-from cocreator.schemas import CausalChain, HistoricalAnalysis, FutureConfirmation, KeyObject, PipelineConfig
+from cocreator.schemas import CausalChain, PipelineConfig
 from cocreator.config import load_config
 from cocreator.pipeline.detector import EventDetector
 from cocreator.pipeline.extractor import VideoFrameExtractor
@@ -137,26 +137,11 @@ class TestCausalChainSerialization:
 
     def test_causal_chain_json_roundtrip(self):
         """Test CausalChain can be serialized and deserialized."""
-        key_obj = KeyObject(type="pedestrian", location="crosswalk", threat_level="high")
-        analysis = HistoricalAnalysis(
-            ego_status="cruising",
-            key_objects=[key_obj],
-            most_critical_object=key_obj,
-            predicted_action="brake",
-            reasoning="Pedestrian detected"
-        )
-        confirmation = FutureConfirmation(
-            actual_action="brake",
-            action_status="completed",
-            related_to_history=True
-        )
         chain = CausalChain(
             episode_id="ep001",
             event_frame_id="frame_050",
-            confidence=0.85,
-            historical_analysis=analysis,
-            future_confirmation=confirmation,
-            causal_link="Pedestrian caused braking"
+            frame_ids=["0040", "0045"],
+            causal_text="The ego vehicle was cruising. A pedestrian at crosswalk was detected.",
         )
 
         # Serialize to JSON
@@ -166,10 +151,8 @@ class TestCausalChainSerialization:
         chain2 = CausalChain.model_validate_json(json_str)
 
         assert chain2.episode_id == "ep001"
-        assert chain2.confidence == 0.85
-        assert chain2.historical_analysis.ego_status == "cruising"
-        assert chain2.future_confirmation.actual_action == "brake"
-        assert chain2.causal_link == "Pedestrian caused braking"
+        assert chain2.frame_ids == ["0040", "0045"]
+        assert chain2.causal_text
 
 
 class TestConfigLoader:

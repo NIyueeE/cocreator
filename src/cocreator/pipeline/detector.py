@@ -14,11 +14,11 @@ from ..schemas import DetectedEvent, PipelineConfig
 @dataclass
 class RawEvent:
     """Internal representation of a detected event before clustering."""
+
     episode_id: str
     frame_idx: int
     frame_id: str
     action_type: str
-    confidence: float
     event_type: str  # 'acceleration', 'braking', 'steering'
 
 
@@ -101,7 +101,9 @@ class EventDetector:
                     # Handles both decimal (0.015) and scientific notation (1.23e-02)
                     tokens = line.strip("[]").strip().split()
                     if len(tokens) >= 3:
-                        positions.append([float(tokens[0]), float(tokens[1]), float(tokens[2])])
+                        positions.append(
+                            [float(tokens[0]), float(tokens[1]), float(tokens[2])]
+                        )
                         frame_ids.append(pos_file.stem)
 
         return np.array(positions), frame_ids
@@ -173,13 +175,13 @@ class EventDetector:
         """
         events = []
 
-        # Compute adaptive threshold for acceleration
-        if len(velocities) > 0:
-            mu = np.mean(velocities)
-            sigma = np.std(velocities)
-            acc_threshold = mu + self.threshold * sigma
+        # Compute adaptive threshold from accelerations
+        if len(accelerations) > 0:
+            acc_mu = np.mean(accelerations)
+            acc_sigma = np.std(accelerations)
+            acc_threshold = abs(acc_mu) + self.threshold * acc_sigma
         else:
-            acc_threshold = float('inf')
+            acc_threshold = float("inf")
 
         # Detect acceleration/braking events
         for i in range(len(accelerations)):
@@ -195,40 +197,47 @@ class EventDetector:
                     action_type = "acceleration"
                     event_type = "acceleration"
 
-                confidence = min(0.99, abs_acc / acc_threshold)
-
                 # Frame index corresponds to i+1 (acceleration at transition)
                 frame_idx = i + 1
-                frame_id = frame_ids[frame_idx] if frame_idx < len(frame_ids) else f"frame_{frame_idx:04d}"
+                frame_id = (
+                    frame_ids[frame_idx]
+                    if frame_idx < len(frame_ids)
+                    else f"frame_{frame_idx:04d}"
+                )
 
-                events.append(RawEvent(
-                    episode_id=episode_id,
-                    frame_idx=frame_idx,
-                    frame_id=frame_id,
-                    action_type=action_type,
-                    confidence=float(confidence),
-                    event_type=event_type,
-                ))
+                events.append(
+                    RawEvent(
+                        episode_id=episode_id,
+                        frame_idx=frame_idx,
+                        frame_id=frame_id,
+                        action_type=action_type,
+                        event_type=event_type,
+                    )
+                )
 
         # Detect steering events
         for i in range(len(direction_changes)):
             angle = direction_changes[i]
 
             if angle > self.steering_threshold:
-                confidence = min(0.99, angle / (self.steering_threshold * 2))
 
                 # Frame index corresponds to i+1 (direction change at transition)
                 frame_idx = i + 1
-                frame_id = frame_ids[frame_idx] if frame_idx < len(frame_ids) else f"frame_{frame_idx:04d}"
+                frame_id = (
+                    frame_ids[frame_idx]
+                    if frame_idx < len(frame_ids)
+                    else f"frame_{frame_idx:04d}"
+                )
 
-                events.append(RawEvent(
-                    episode_id=episode_id,
-                    frame_idx=frame_idx,
-                    frame_id=frame_id,
-                    action_type="steering",
-                    confidence=float(confidence),
-                    event_type="steering",
-                ))
+                events.append(
+                    RawEvent(
+                        episode_id=episode_id,
+                        frame_idx=frame_idx,
+                        frame_id=frame_id,
+                        action_type="steering",
+                        event_type="steering",
+                    )
+                )
 
         # Sort by frame index
         events.sort(key=lambda e: e.frame_idx)
@@ -237,7 +246,6 @@ class EventDetector:
     def _deduplicate_events(self, events: list[RawEvent]) -> list[DetectedEvent]:
         """
         Remove events that are too close to each other (within min_interval).
-        Keep the event with highest confidence in each group.
         """
         if not events:
             return []
@@ -249,17 +257,12 @@ class EventDetector:
             if event.frame_idx - last_event_idx >= self.min_interval:
                 filtered.append(event)
                 last_event_idx = event.frame_idx
-            else:
-                # Too close to previous event, keep the one with higher confidence
-                if filtered and event.confidence > filtered[-1].confidence:
-                    filtered[-1] = event
 
         return [
             DetectedEvent(
                 episode_id=event.episode_id,
                 frame_id=event.frame_id,
                 action_type=event.action_type,
-                confidence=event.confidence,
             )
             for event in filtered
         ]
@@ -270,7 +273,6 @@ class EventDetector:
 
         Events within min_interval frames are merged into a single event:
         - action_type: prioritized as hard_brake > steering > acceleration
-        - confidence: maximum of all events in cluster
         - frame_id: first event in cluster
         """
         if not events:
@@ -301,10 +303,7 @@ class EventDetector:
         priority = {"hard_brake": 3, "steering": 2, "acceleration": 1}
 
         # Select action type with highest priority
-        best_event = max(cluster, key=lambda e: (priority.get(e.action_type, 0), e.confidence))
-
-        # Compute max confidence in cluster
-        max_confidence = max(e.confidence for e in cluster)
+        best_event = max(cluster, key=lambda e: priority.get(e.action_type, 0))
 
         # Use first event's frame_id
         first_event = cluster[0]
@@ -313,7 +312,6 @@ class EventDetector:
             episode_id=first_event.episode_id,
             frame_id=first_event.frame_id,
             action_type=best_event.action_type,
-            confidence=max_confidence,
         )
 
 

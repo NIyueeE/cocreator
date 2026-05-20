@@ -46,7 +46,7 @@ def _substitute_env_vars(obj):
     """
     if isinstance(obj, str):
         # Match ${VAR_NAME} pattern
-        pattern = r'\$\{([^}]+)\}'
+        pattern = r"\$\{([^}]+)\}"
         matches = re.findall(pattern, obj)
         for var_name in matches:
             if var_name not in os.environ:

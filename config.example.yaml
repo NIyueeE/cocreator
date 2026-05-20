@@ -37,11 +37,14 @@ pipeline:
   # Output directory for JSONL files
   output_dir: "./output"
 
-  # Number of historical frames before event for VLM analysis
-  history_frames: 7
+  # Number of historical segments to analyze (before event)
+  history_segments: 3
 
-  # Number of future frames after event for VLM confirmation
-  future_frames: 11
+  # Number of future segments to confirm (after event)
+  future_segments: 2
+
+  # Number of frames per segment
+  frames_per_segment: 5
 
   # Anomaly detection threshold (standard deviations above mean)
   # Higher = fewer events, Lower = more events

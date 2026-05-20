@@ -47,9 +47,8 @@ class PipelineConfig(BaseModel):
         dataset_path: Path to the dataset directory.
         videos_path: Path to the videos directory.
         output_dir: Directory for pipeline output files.
-        history_segments: Number of past segments to analyze.
-        future_segments: Number of future segments to confirm.
-        frames_per_segment: Number of frames per segment.
+        history_frames: Number of historical frames before event for VLM analysis.
+        future_frames: Number of future frames after event for VLM confirmation.
         anomaly_threshold: Threshold for anomaly detection.
         retry_max_attempts: Maximum retry attempts on failure.
         retry_backoff_factor: Backoff multiplier for retries.
@@ -61,9 +60,8 @@ class PipelineConfig(BaseModel):
     dataset_path: str = ""
     videos_path: str = ""
     output_dir: str = "./output"
-    history_segments: int = 3
-    future_segments: int = 2
-    frames_per_segment: int = 5
+    history_frames: int = 7
+    future_frames: int = 11
     anomaly_threshold: float = 2.0
     retry_max_attempts: int = 3
     retry_backoff_factor: float = 2.0
@@ -93,13 +91,11 @@ class DetectedEvent(BaseModel):
         episode_id: Unique identifier for the driving episode.
         frame_id: Frame identifier where the event was detected.
         action_type: Type of detected action (e.g., "hard_brake", "acceleration").
-        confidence: Confidence score for the detection.
     """
 
     episode_id: str
     frame_id: str
     action_type: str
-    confidence: float = 1.0
 
     model_config = {"extra": "forbid"}
 
@@ -153,22 +149,18 @@ class FutureConfirmation(BaseModel):
 
 
 class CausalChain(BaseModel):
-    """Final output: Complete causal chain for an event.
+    """Final output: Causal chain for an event, ready for fine-tuning.
 
     Attributes:
         episode_id: Unique identifier for the driving episode.
         event_frame_id: Frame identifier of the detected event.
-        confidence: Overall confidence score for the causal chain.
-        historical_analysis: Stage 1 analysis results.
-        future_confirmation: Stage 2 confirmation results.
-        causal_link: Natural language summary of the causal relationship.
+        frame_ids: All frame numbers used for analysis (history + future, chronological).
+        causal_text: VLM-produced causal description combining prediction and outcome.
     """
 
     episode_id: str
     event_frame_id: str
-    confidence: float
-    historical_analysis: HistoricalAnalysis
-    future_confirmation: FutureConfirmation
-    causal_link: str
+    frame_ids: list[str]
+    causal_text: str
 
     model_config = {"extra": "forbid"}

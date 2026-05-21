@@ -6,62 +6,51 @@
 
 CoCreator 是一款基于视觉语言模型（VLM）的驾驶场景分析工具，通过三阶段流水线对驾驶数据进行分析：
 
-1. **detect** — 从驾驶片段中识别异常事件（急刹车、加速、转向）
-2. **reason** — 两阶段 VLM 分析（历史帧预测 → 未来帧验证），生成因果链
-3. **pack** — 将因果链打包为 HuggingFace 兼容的训练数据集，附带 HTML 浏览报告
-
-## 技术架构
-
-```
-cocreator/
-├── src/cocreator/
-│   ├── cli.py              # CLI 入口：detect, reason, pack
-│   ├── config.py           # YAML 配置加载 + ${ENV_VAR} 替换
-│   ├── schemas.py          # Pydantic 数据模型
-│   ├── pipeline/
-│   │   ├── detector.py     # 事件检测（速度/加速度/转向异常）
-│   │   ├── reasoner.py     # 两阶段 VLM 因果推理（严格数据隔离）
-│   │   ├── extractor.py    # 视频帧提取（时序隔离）
-│   │   └── progress_tracker.py  # 断点续跑（原子写入）
-│   ├── prompts/
-│   │   └── __init__.py     # Jinja2 模板（遗留，reasoner 未使用）
-│   └── providers/
-│       └── openai_compatible.py  # 异步 VLM 客户端（信号量 + 指数退避重试）
-└── tests/
-```
+1. **detect** — 从位置/速度数据中检测异常事件（急刹、加速、转向）
+2. **reason** — 两阶段 VLM 分析（历史帧预测 → 未来帧验证）生成因果链
+3. **pack** — 将因果链打包为 HuggingFace 兼容的训练数据集 + HTML 报告
 
 ## 快速开始
 
-### 安装
+### 安装依赖
 
 ```bash
 uv sync
 ```
 
-### 配置
+### 配置环境
 
-编辑 `config.yaml`，关键参数：
+创建 `config.yaml`（参考 `config.example.yaml`，或直接从环境变量配置）：
 
 ```yaml
 vlm:
   base_url: "https://api.siliconflow.cn"
-  api_key: "${API_KEY}"          # 支持环境变量引用
+  api_key: "${SILICONFLOW_API_KEY}"
   model: "Qwen/Qwen3.5-397B-A17B"
+  timeout: 120.0
 
 rate_limit:
-  concurrency: 20                # VLM 请求并发数
+  rpm: 500
+  tpm: 2000000
+  concurrency: 20
 
 pipeline:
-  dataset_path: "/data/action_info"  # 位置数据目录
-  videos_path: "/data/videos"        # 视频帧目录
+  dataset_path: "/data/cocreator/action_info"
+  videos_path: "/data/cocreator/videos"
   output_dir: "./output"
-  history_frames: 7                  # 事件前历史帧数
-  future_frames: 11                  # 事件后未来帧数
+  history_frames: 7
+  future_frames: 11
   anomaly_threshold: 2.0
   steering_threshold: 15.0
+  min_event_interval: 5
+  merge_adjacent_events: true
+  retry_max_attempts: 3
+  retry_backoff_factor: 2.0
 ```
 
-### 运行
+环境变量 `${ENV_VAR}` 语法在配置文件中所有字段均支持。
+
+### 完整流水线
 
 ```bash
 # 1. 事件检测
@@ -70,18 +59,16 @@ cocreator detect -c config.yaml
 # 2. 因果推理
 cocreator reason -c config.yaml
 
-# 3. 打包数据集
+# 3. 打包数据集 + 浏览报告
 cocreator pack -c config.yaml
-
-# 4. （可选）重新生成浏览报告
-cocreator pack review -c config.yaml
+cocreator pack review -c config.yaml   # 单独重新生成 review.html
 ```
 
-## CLI 命令
+## 使用指南
 
 ### detect — 事件检测
 
-从位置数据中检测异常驾驶事件（急刹车、加速、转向）。
+从驾驶数据中检测异常事件，输出 JSON 到 `{output_dir}/events/`。
 
 ```bash
 cocreator detect -c config.yaml
@@ -91,50 +78,101 @@ cocreator detect -c config.yaml --episode-id ep001 --episode-id ep002
 | 参数 | 说明 |
 |------|------|
 | `-c, --config` | YAML 配置文件路径 |
-| `--episode-id` | 指定处理的 episode（可重复） |
+| `--episode-id` | 仅处理指定 episode（可重复） |
 
-输出：`{output_dir}/events/{episode_id}_{frame_id}.json`，每事件一个 JSON。
+检测算法：基于速度和加速度的统计异常检测（自适应阈值），以及方向变化的转向检测。相邻事件可合并去重。
 
 ### reason — 因果推理
 
-两阶段 VLM 分析：
-1. **历史分析**：事件前帧 → 预测自车行为
-2. **未来确认**：事件后帧 → 验证预测，生成因果描述
-
-两阶段严格数据隔离：历史分析只能看到事件前帧（含事件帧），未来确认只能看到事件后帧。
+对检测到的事件进行两阶段 VLM 因果推理，输出 JSON 到 `{output_dir}/chains/`。
 
 ```bash
 cocreator reason -c config.yaml
-cocreator reason -c config.yaml --event-id ep001:0037 --event-id ep002:0042
-cocreator reason -c config.yaml --no-resume  # 从头开始
+cocreator reason -c config.yaml --event-id ep001:0037 --event-id ep002:0051
+cocreator reason -c config.yaml --no-resume   # 从头重新处理
 ```
 
 | 参数 | 说明 |
 |------|------|
 | `-c, --config` | YAML 配置文件路径 |
-| `--event-id` | 指定处理的 event（`episode_id:frame_id`，可重复） |
+| `--event-id` | 仅处理指定事件（`episode_id:frame_id` 格式，可重复） |
 | `--resume` | 从上次进度继续（默认 true） |
 
-输出：`{output_dir}/chains/{episode_id}_{event_frame_id}.json`。
+两阶段分析：
 
-### pack — 数据集打包
+1. **历史分析**：分析事件前的帧（含事件帧），预测自车行为
+2. **未来确认**：分析事件后的帧，验证预测并生成因果描述
 
-将因果链打包为 HuggingFace `datasets` 兼容的训练数据集：
+两阶段间严格数据隔离：第二阶段只看事件后帧，只接收第一阶段的文本摘要。
+
+### pack — 打包数据集
+
+将因果链打包为 HuggingFace 格式的训练数据集，输出到 `{output_dir}/dataset/`。
 
 ```bash
-cocreator pack -c config.yaml              # 全量打包
-cocreator pack review -c config.yaml        # 仅重新生成 review.html
+cocreator pack -c config.yaml
+cocreator pack review -c config.yaml   # 重新生成 review.html
 ```
 
-从 `{output_dir}/chains/` 读取链数据，输出到 `{output_dir}/dataset/`：
-- `videos/{sample_id:04d}/*.jpg` — 按时间序排列的帧（含事件帧）
-- `causal/{sample_id:04d}.txt` — 因果描述文本
-- `review.html` — 嵌入式图片的浏览报告（蓝色边框=历史帧，绿色边框=未来帧，EVENT 标记事件帧）
-- `cocreator-dataset.py` — HuggingFace 数据集加载器
+| 子命令 | 说明 |
+|--------|------|
+| `pack`（默认） | 打包：拷贝帧图像、生成因果文本、生成 HuggingFace 加载器、生成 review.html |
+| `pack review` | 单独重新生成 review.html（需已运行过 pack） |
 
-## 数据模型
+输出结构：
 
-### DetectedEvent
+```
+{output_dir}/dataset/
+├── videos/{sample_id}/   # 按顺序编号的帧图像（01.jpg, 02.jpg, ...）
+├── causal/{sample_id}.txt  # 因果描述文本
+├── meta.json              # 样本元数据（事件帧位置、action_type 等）
+├── review.html            # 可浏览的 HTML 报告
+├── cocreator-dataset.py   # HuggingFace datasets 加载器
+└── README.md
+```
+
+## 配置说明
+
+### VLM 配置 (`vlm`)
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `base_url` | `https://api.siliconflow.cn` | API 地址（/v1 后缀自动补全） |
+| `api_key` | 空 | API 密钥，支持 `${ENV_VAR}` |
+| `model` | `Qwen/Qwen3.5-397B-A17B` | 模型名称 |
+| `timeout` | 120.0 | 请求超时（秒） |
+
+兼容任何 OpenAI 兼容 API（SiliconFlow、Ollama、Azure OpenAI 等）。
+
+### 限流配置 (`rate_limit`)
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `rpm` | 500 | 每分钟请求数限制 |
+| `tpm` | 2000000 | 每分钟 token 数限制 |
+| `concurrency` | 20 | 最大并发请求数 |
+
+### 流水线配置 (`pipeline`)
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `dataset_path` | 空 | action_info 目录（位置数据，用于事件检测） |
+| `videos_path` | 空 | 视频帧目录（JPEG 图像） |
+| `output_dir` | `./output` | 所有输出文件的根目录 |
+| `history_frames` | 7 | 事件前（含事件帧）提取的帧数 |
+| `future_frames` | 11 | 事件后提取的帧数 |
+| `anomaly_threshold` | 2.0 | 异常检测的标准差倍数 |
+| `steering_threshold` | 15.0 | 转向检测角度阈值（度） |
+| `min_event_interval` | 5 | 事件间最小帧间隔（去重） |
+| `merge_adjacent_events` | true | 是否合并相邻事件 |
+| `retry_max_attempts` | 3 | API 调用最大重试次数 |
+| `retry_backoff_factor` | 2.0 | 指数退避因子 |
+
+## 输出格式
+
+### 事件格式 (JSON)
+
+`{output_dir}/events/{episode_id}_{frame_id}.json`：
 
 ```json
 {
@@ -144,21 +182,43 @@ cocreator pack review -c config.yaml        # 仅重新生成 review.html
 }
 ```
 
-### CausalChain
+### 因果链格式 (JSON)
+
+`{output_dir}/chains/{episode_id}_{event_frame_id}.json`：
 
 ```json
 {
   "episode_id": "ep001",
   "event_frame_id": "0037_position_at_current_camera",
-  "frame_ids": ["0032", "0034", "0036", "0038", "0040"],
-  "causal_text": "The ego vehicle was cruising... I predicted I would brake..."
+  "frame_ids": ["0032", "0034", "0036", "0038", "0040", "0042"],
+  "causal_text": "The ego vehicle was cruising at a moderate speed when..."
 }
 ```
 
-## 关键设计
+`frame_ids` 按时间序排列：历史帧（含事件帧）在前，未来帧在后。
 
-- **事件帧归属历史**：`get_history_frames` 包含事件帧本身（`num <= event_num`），VLM 能看到事件发生瞬间的上下文
-- **严格时序隔离**：历史分析只能访问事件前帧（含事件帧），未来分析只能访问事件后帧。`_validate_no_leakage` 断言保证
-- **异步并发**：`OpenAICompatibleProvider` 使用 `asyncio.Semaphore` 控制并发，`retry_with_backoff` 指数退避重试
-- **原子写入**：所有输出文件先写 `.tmp` 再 `rename`，防止写入中断导致数据损坏
-- **`history_frames`/`future_frames`**：PipelineConfig 使用直接帧数配置（非 segment 模式）
+## 技术架构
+
+```
+src/cocreator/
+├── cli.py                       # 3 CLI 命令：detect, reason, pack
+├── config.py                    # YAML 加载 + ${ENV_VAR} 递归替换
+├── schemas.py                   # Pydantic 数据模型
+├── pipeline/
+│   ├── detector.py              # 速度/加速度/转向异常检测
+│   ├── extractor.py             # 视频帧提取（严格时间隔离）
+│   ├── reasoner.py              # 两阶段 VLM 因果推理
+│   └── progress_tracker.py      # 断点续跑（原子写入）
+├── providers/
+│   └── openai_compatible.py     # 异步 VLM 客户端（信号量 + 重试）
+└── prompts/
+    └── __init__.py              # Jinja2 模板（遗留，reasoner 未使用）
+```
+
+### 核心设计
+
+- **严格时间数据隔离**：历史分析只看事件前（含事件帧）的帧；未来确认只看事件后的帧
+- **异步并发**：VLM 调用使用 `asyncio.Semaphore` 控制并发；检测阶段使用 `ThreadPoolExecutor`（CPU 密集型）
+- **结构化输出**：使用 OpenAI SDK `json_schema` 结构化输出，无需手动解析
+- **原子写入**：所有文件写入通过 `.tmp` + `rename` 保证崩溃安全
+- **开箱即用**：支持 HTTP 代理（`httpx[socks]`）

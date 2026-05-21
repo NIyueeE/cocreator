@@ -396,7 +396,7 @@ def _build_dataset_report(dataset_dir: Path, samples_meta: Optional[dict] = None
             is_event = fi == mid - 1
             img_path = video_dir / f"{fi + 1:02d}.jpg"
             src = _img_to_b64(img_path) if img_path.exists() else ""
-            label = f"EVENT" if is_event else f"{fi + 1:02d}"
+            label = "EVENT" if is_event else f"{fi + 1:02d}"
             parts.append(
                 f'<div class="frame {cls}"><img src="{src}" alt="frame {fi + 1}"><span class="label">{label}</span></div>'
             )
@@ -532,41 +532,41 @@ def pack(
                     )
 
     # dataset loader
-    (dataset_dir / "cocreator-dataset.py").write_text(
-        '''"""
-CoCreator Driving Scene - HuggingFace dataset loader.
+    (dataset_dir / "cocreator_dataset.py").write_text(
+        '''"""CoCreator Driving Scene - HuggingFace dataset loader.
+
+Usage:
+    from cocreator_dataset import load_cocreator_dataset
+    ds = load_cocreator_dataset()
 """
 from pathlib import Path
-import datasets
+from datasets import Dataset
 
 
-class CoCreatorDataset(datasets.GeneratorBasedBuilder):
-    VERSION = datasets.Version("1.0.0")
+def load_cocreator_dataset(dataset_dir: str = ".") -> Dataset:
+    """Load the CoCreator dataset as a HuggingFace Dataset.
 
-    def _info(self):
-        return datasets.DatasetInfo(
-            description="Driving scene causal reasoning dataset",
-            features=datasets.Features({
-                "images": datasets.Sequence(datasets.Image()),
-                "causal_text": datasets.Value("string"),
-                "id": datasets.Value("string"),
-            }),
-        )
+    Args:
+        dataset_dir: Path to the dataset directory (containing videos/ and causal/).
 
-    def _split_generators(self, dl_manager):
-        base = Path(__file__).parent
-        ids = sorted(d.name for d in (base / "videos").iterdir() if d.is_dir())
-        return [datasets.SplitGenerator(name=datasets.Split.TRAIN, gen_kwargs={"base": base, "ids": ids})]
+    Returns:
+        Dataset with columns: id, images, causal_text
+    """
+    base = Path(dataset_dir)
+    ids = sorted(d.name for d in (base / "videos").iterdir() if d.is_dir())
 
-    def _generate_examples(self, base, ids):
-        for sid in ids:
-            img_dir = base / "videos" / sid
-            paths = sorted(img_dir.glob("*.jpg"))
-            yield sid, {
-                "id": sid,
-                "images": [str(p) for p in paths],
-                "causal_text": (base / "causal" / f"{sid}.txt").read_text(encoding="utf-8"),
-            }
+    data = []
+    for sid in ids:
+        img_dir = base / "videos" / sid
+        paths = sorted(img_dir.glob("*.jpg"))
+        causal_text = (base / "causal" / f"{sid}.txt").read_text(encoding="utf-8")
+        data.append({
+            "id": sid,
+            "images": [str(p) for p in paths],
+            "causal_text": causal_text,
+        })
+
+    return Dataset.from_list(data)
 ''',
         encoding="utf-8",
     )

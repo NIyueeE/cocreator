@@ -533,47 +533,87 @@ def pack(
 
     # dataset loader
     (dataset_dir / "cocreator_dataset.py").write_text(
-        '''"""CoCreator Driving Scene - HuggingFace dataset loader.
+        '''"""CoCreator Driving Scene — HuggingFace dataset loader."""
 
-Usage:
-    from cocreator_dataset import load_cocreator_dataset
-    ds = load_cocreator_dataset()
-"""
 from pathlib import Path
-from datasets import Dataset
+
+import datasets
 
 
-def load_cocreator_dataset(dataset_dir: str = ".") -> Dataset:
-    """Load the CoCreator dataset as a HuggingFace Dataset.
+class CoCreatorDataset(datasets.GeneratorBasedBuilder):
+    """CoCreator: driving scene causal reasoning dataset."""
 
-    Args:
-        dataset_dir: Path to the dataset directory (containing videos/ and causal/).
+    VERSION = datasets.Version("1.0.0")
 
-    Returns:
-        Dataset with columns: id, images, causal_text
-    """
-    base = Path(dataset_dir)
-    ids = sorted(d.name for d in (base / "videos").iterdir() if d.is_dir())
+    def _info(self):
+        return datasets.DatasetInfo(
+            description="Driving scene causal reasoning dataset.",
+            features=datasets.Features({
+                "id": datasets.Value("string"),
+                "images": datasets.Sequence(datasets.Image()),
+                "causal_text": datasets.Value("string"),
+            }),
+            homepage="https://github.com/NIyueeE/cocreator",
+        )
 
-    data = []
-    for sid in ids:
-        img_dir = base / "videos" / sid
-        paths = sorted(img_dir.glob("*.jpg"))
-        causal_text = (base / "causal" / f"{sid}.txt").read_text(encoding="utf-8")
-        data.append({
-            "id": sid,
-            "images": [str(p) for p in paths],
-            "causal_text": causal_text,
-        })
+    def _split_generators(self, dl_manager):
+        base = Path(__file__).parent
+        ids = sorted(d.name for d in (base / "videos").iterdir() if d.is_dir())
+        return [
+            datasets.SplitGenerator(
+                name=datasets.Split.TRAIN,
+                gen_kwargs={"base": base, "ids": ids},
+            )
+        ]
 
-    return Dataset.from_list(data)
+    def _generate_examples(self, base, ids):
+        for sid in ids:
+            img_dir = base / "videos" / sid
+            paths = sorted(img_dir.glob("*.jpg"))
+            causal = (base / "causal" / f"{sid}.txt").read_text(encoding="utf-8")
+            yield sid, {
+                "id": sid,
+                "images": [str(p) for p in paths],
+                "causal_text": causal,
+            }
 ''',
         encoding="utf-8",
     )
 
-    # placeholder README
+    # dataset card
     (dataset_dir / "README.md").write_text(
-        f"# CoCreator Dataset — {len(meta)} samples\n\nSee [review.html](./review.html) for data overview.\n",
+        f'''---
+annotations_creators:
+- machine-generated
+language:
+- en
+license:
+- mit
+pretty_name: CoCreator Driving Scene
+size_categories:
+- 1K<n<10K
+task_categories:
+- visual-question-answering
+- image-to-text
+tags:
+- driving
+- causal-reasoning
+---
+
+# CoCreator Dataset
+
+驾驶场景因果关系数据集，由 [CoCreator](https://github.com/NIyueeE/cocreator) 自动构建，共 **{len(meta)} 个样本**。
+
+## 加载
+
+```python
+from datasets import load_dataset
+
+ds = load_dataset("cocreator_dataset.py", split="train")
+```
+
+浏览 [review.html](./review.html) 查看数据预览。
+''',
         encoding="utf-8",
     )
 

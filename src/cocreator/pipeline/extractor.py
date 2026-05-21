@@ -98,7 +98,7 @@ class VideoFrameExtractor(FrameExtractor):
     ) -> list[str]:
         event_num = self._parse_frame_num(event_frame_id)
         all_frames = self._list_episode_frames(episode_id)
-        history = [(num, path) for num, path in all_frames if num < event_num]
+        history = [(num, path) for num, path in all_frames if num <= event_num]
         if len(history) < count:
             logging.warning(
                 "Not enough history frames for %s/%s: requested %d, got %d, using %d",
@@ -145,7 +145,7 @@ class VideoFrameExtractor(FrameExtractor):
             frame_num = self._parse_frame_num(Path(frame_path).stem)
 
             if is_history:
-                assert frame_num < event_num, (
+                assert frame_num <= event_num, (
                     f"History frame {frame_num} >= event {event_num}. "
                     f"Data isolation violation!"
                 )

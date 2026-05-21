@@ -220,7 +220,6 @@ class EventDetector:
             angle = direction_changes[i]
 
             if angle > self.steering_threshold:
-
                 # Frame index corresponds to i+1 (direction change at transition)
                 frame_idx = i + 1
                 frame_id = (

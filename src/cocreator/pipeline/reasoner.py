@@ -29,16 +29,47 @@ _HISTORY_SCHEMA = {
             "properties": {
                 "ego_status": {
                     "type": "string",
-                    "enum": ["cruising", "accelerating", "braking", "turning", "stopped", "lane_changing"],
+                    "enum": [
+                        "cruising",
+                        "accelerating",
+                        "braking",
+                        "turning",
+                        "stopped",
+                        "lane_changing",
+                    ],
                 },
                 "key_objects": {
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "type": {"type": "string", "enum": ["pedestrian", "vehicle", "traffic_light", "cyclist", "animal", "other"]},
-                            "location": {"type": "string", "enum": ["ahead", "behind", "left", "right", "intersection", "crosswalk", "road_edge"]},
-                            "threat_level": {"type": "string", "enum": ["high", "medium", "low"]},
+                            "type": {
+                                "type": "string",
+                                "enum": [
+                                    "pedestrian",
+                                    "vehicle",
+                                    "traffic_light",
+                                    "cyclist",
+                                    "animal",
+                                    "other",
+                                ],
+                            },
+                            "location": {
+                                "type": "string",
+                                "enum": [
+                                    "ahead",
+                                    "behind",
+                                    "left",
+                                    "right",
+                                    "intersection",
+                                    "crosswalk",
+                                    "road_edge",
+                                ],
+                            },
+                            "threat_level": {
+                                "type": "string",
+                                "enum": ["high", "medium", "low"],
+                            },
                         },
                         "required": ["type", "location", "threat_level"],
                         "additionalProperties": False,
@@ -49,9 +80,33 @@ _HISTORY_SCHEMA = {
                         {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string", "enum": ["pedestrian", "vehicle", "traffic_light", "cyclist", "animal", "other"]},
-                                "location": {"type": "string", "enum": ["ahead", "behind", "left", "right", "intersection", "crosswalk", "road_edge"]},
-                                "threat_level": {"type": "string", "enum": ["high", "medium", "low"]},
+                                "type": {
+                                    "type": "string",
+                                    "enum": [
+                                        "pedestrian",
+                                        "vehicle",
+                                        "traffic_light",
+                                        "cyclist",
+                                        "animal",
+                                        "other",
+                                    ],
+                                },
+                                "location": {
+                                    "type": "string",
+                                    "enum": [
+                                        "ahead",
+                                        "behind",
+                                        "left",
+                                        "right",
+                                        "intersection",
+                                        "crosswalk",
+                                        "road_edge",
+                                    ],
+                                },
+                                "threat_level": {
+                                    "type": "string",
+                                    "enum": ["high", "medium", "low"],
+                                },
                             },
                             "required": ["type", "location", "threat_level"],
                             "additionalProperties": False,
@@ -61,11 +116,24 @@ _HISTORY_SCHEMA = {
                 },
                 "predicted_action": {
                     "type": "string",
-                    "enum": ["brake", "accelerate", "lane_change_left", "lane_change_right", "maintain_speed", "stop"],
+                    "enum": [
+                        "brake",
+                        "accelerate",
+                        "lane_change_left",
+                        "lane_change_right",
+                        "maintain_speed",
+                        "stop",
+                    ],
                 },
                 "reasoning": {"type": "string"},
             },
-            "required": ["ego_status", "key_objects", "most_critical_object", "predicted_action", "reasoning"],
+            "required": [
+                "ego_status",
+                "key_objects",
+                "most_critical_object",
+                "predicted_action",
+                "reasoning",
+            ],
             "additionalProperties": False,
         },
     },
@@ -85,7 +153,15 @@ _FUTURE_SCHEMA = {
                 },
                 "actual_action": {
                     "type": "string",
-                    "enum": ["brake", "accelerate", "lane_change_left", "lane_change_right", "maintain_speed", "stop", "none"],
+                    "enum": [
+                        "brake",
+                        "accelerate",
+                        "lane_change_left",
+                        "lane_change_right",
+                        "maintain_speed",
+                        "stop",
+                        "none",
+                    ],
                 },
                 "action_status": {
                     "type": "string",
@@ -94,7 +170,13 @@ _FUTURE_SCHEMA = {
                 "related_to_history": {"type": "boolean"},
                 "verification_notes": {"type": "string"},
             },
-            "required": ["causal_text", "actual_action", "action_status", "related_to_history", "verification_notes"],
+            "required": [
+                "causal_text",
+                "actual_action",
+                "action_status",
+                "related_to_history",
+                "verification_notes",
+            ],
             "additionalProperties": False,
         },
     },
@@ -233,7 +315,10 @@ class CausalReasoner:
         for causal understanding combining prediction + actual outcome.
         Returns (FutureConfirmation, causal_text) where causal_text is VLM-produced.
         """
-        stage1_assistant = {"role": "assistant", "content": self._format_history_as_assistant(history_result)}
+        stage1_assistant = {
+            "role": "assistant",
+            "content": self._format_history_as_assistant(history_result),
+        }
         stage2_user = {
             "role": "user",
             "content": (

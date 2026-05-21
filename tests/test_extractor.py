@@ -9,8 +9,8 @@ from cocreator.pipeline.extractor import VideoFrameExtractor
 
 
 class TestVideoFrameExtractor:
-    def test_history_frames_exclude_event(self, tmp_path):
-        """History frames must all be before the event frame."""
+    def test_history_frames_include_event(self, tmp_path):
+        """History frames include the event frame (as the closest frame to the event)."""
         video_dir = tmp_path / "ep001"
         video_dir.mkdir()
         for i in range(100):
@@ -21,7 +21,7 @@ class TestVideoFrameExtractor:
 
         for fp in history:
             num = int(Path(fp).stem.split("_")[1])
-            assert num < 50
+            assert num <= 50
 
     def test_future_frames_exclude_event(self, tmp_path):
         """Future frames must all be after the event frame."""
@@ -52,7 +52,7 @@ class TestVideoFrameExtractor:
 
         extractor = VideoFrameExtractor(str(tmp_path))
         history = extractor.get_history_frames("ep001", "frame_0003", count=10)
-        assert len(history) == 3  # only 0,1,2 available
+        assert len(history) == 4  # frames 0,1,2,3 (includes event frame)
 
     def test_not_enough_future_warns(self, tmp_path):
         """When there aren't enough future frames, return what's available."""
@@ -81,7 +81,7 @@ class TestVideoFrameExtractor:
             assert nums[i] < nums[i + 1], (
                 f"History not chronological: {nums}"
             )
-        assert nums[-1] < 50  # closest frame still before event
+        assert nums[-1] <= 50  # closest frame is event frame
 
     def test_future_frames_chronological_order(self, tmp_path):
         """Future frames must be in chronological order (oldest first)."""
@@ -111,9 +111,9 @@ class TestVideoFrameExtractor:
         history = extractor.get_history_frames("ep001", "frame_0150", count=5)
 
         nums = [int(Path(fp).stem.split("_")[1]) for fp in history]
-        # Last frame should be closest to event (largest number, but still < 150)
-        assert nums[-1] == 149, f"Last frame should be frame_0149, got frame_{nums[-1]:04d}"
-        assert nums[0] == 145, f"First frame should be frame_0145, got frame_{nums[0]:04d}"
+        # Last frame should be the event frame (closest to event)
+        assert nums[-1] == 150, f"Last frame should be frame_0150, got frame_{nums[-1]:04d}"
+        assert nums[0] == 146, f"First frame should be frame_0146, got frame_{nums[0]:04d}"
 
     def test_nonexistent_episode_raises(self, tmp_path):
         """Requesting a non-existent episode should raise ValueError."""

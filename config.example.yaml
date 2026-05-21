@@ -13,6 +13,9 @@ vlm:
   # Model name - check your provider's available models
   model: "Qwen/Qwen3.5-397B-A17B"
 
+  # Request timeout in seconds
+  timeout: 120.0
+
 # Rate Limiting Configuration
 rate_limit:
   # Requests per minute (RPM) - adjust based on your API tier
@@ -34,17 +37,14 @@ pipeline:
   # Structure: {videos_path}/{episode_id}/{frame_id}_CameraFpgaP0H120.jpg
   videos_path: "/data/ours_dataset/videos"
 
-  # Output directory for JSONL files
+  # Output directory for events, chains, and dataset output
   output_dir: "./output"
 
-  # Number of historical segments to analyze (before event)
-  history_segments: 3
+  # Number of historical frames before event (inclusive) for VLM analysis
+  history_frames: 7
 
-  # Number of future segments to confirm (after event)
-  future_segments: 2
-
-  # Number of frames per segment
-  frames_per_segment: 5
+  # Number of future frames after event for VLM confirmation
+  future_frames: 11
 
   # Anomaly detection threshold (standard deviations above mean)
   # Higher = fewer events, Lower = more events
@@ -52,7 +52,7 @@ pipeline:
 
   # Steering angle threshold (degrees)
   # Frames with direction change above this are flagged as steering events
-  steering_threshold: 15
+  steering_threshold: 15.0
 
   # Minimum frame interval between distinct events
   min_event_interval: 5

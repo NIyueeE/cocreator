@@ -531,98 +531,7 @@ def pack(
                         info=f"{result['id']}… ✓",
                     )
 
-    # dataset loader
-    (dataset_dir / "cocreator_dataset.py").write_text(
-        '''"""CoCreator Driving Scene — HuggingFace dataset loader."""
-
-from pathlib import Path
-
-import datasets
-
-
-class CoCreatorDataset(datasets.GeneratorBasedBuilder):
-    """CoCreator: driving scene causal reasoning dataset."""
-
-    VERSION = datasets.Version("1.0.0")
-
-    def _info(self):
-        return datasets.DatasetInfo(
-            description="Driving scene causal reasoning dataset.",
-            features=datasets.Features({
-                "id": datasets.Value("string"),
-                "images": datasets.Sequence(datasets.Image()),
-                "causal_text": datasets.Value("string"),
-            }),
-            homepage="https://github.com/NIyueeE/cocreator",
-        )
-
-    def _split_generators(self, dl_manager):
-        base = Path(__file__).parent
-        ids = sorted(d.name for d in (base / "videos").iterdir() if d.is_dir())
-        return [
-            datasets.SplitGenerator(
-                name=datasets.Split.TRAIN,
-                gen_kwargs={"base": base, "ids": ids},
-            )
-        ]
-
-    def _generate_examples(self, base, ids):
-        for sid in ids:
-            img_dir = base / "videos" / sid
-            paths = sorted(img_dir.glob("*.jpg"))
-            causal = (base / "causal" / f"{sid}.txt").read_text(encoding="utf-8")
-            yield sid, {
-                "id": sid,
-                "images": [str(p) for p in paths],
-                "causal_text": causal,
-            }
-''',
-        encoding="utf-8",
-    )
-
-    # dataset card
-    (dataset_dir / "README.md").write_text(
-        f'''---
-annotations_creators:
-- machine-generated
-language:
-- en
-license:
-- mit
-pretty_name: CoCreator Driving Scene
-size_categories:
-- 1K<n<10K
-task_categories:
-- visual-question-answering
-- image-to-text
-tags:
-- driving
-- causal-reasoning
----
-
-# CoCreator Dataset
-
-驾驶场景因果关系数据集，由 [CoCreator](https://github.com/NIyueeE/cocreator) 自动构建，共 **{len(meta)} 个样本**。
-
-## 加载
-
-```python
-from datasets import load_dataset
-
-ds = load_dataset("cocreator_dataset.py", split="train")
-```
-
-浏览 [review.html](./review.html) 查看数据预览。
-''',
-        encoding="utf-8",
-    )
-
-    # write metadata for review report and re-generation
     samples_meta = {m["id"]: m for m in meta}
-    (dataset_dir / "meta.json").write_text(
-        json.dumps(samples_meta, indent=2), encoding="utf-8"
-    )
-
     html = _build_dataset_report(dataset_dir, samples_meta=samples_meta)
     (dataset_dir / "review.html").write_text(html, encoding="utf-8")
 
@@ -642,16 +551,40 @@ def review(
     config_obj: AppConfig = ctx.obj
     output = Path(config_obj.pipeline.output_dir)
     dataset_dir = output / "dataset"
+    chains_dir = output / "chains"
+    videos_dir = dataset_dir / "videos"
 
     if not dataset_dir.exists():
         typer.echo(f"Dataset directory not found: {dataset_dir}", err=True)
         raise typer.Exit(1)
 
-    meta_path = dataset_dir / "meta.json"
-    if not meta_path.exists():
-        typer.echo(f"Metadata not found: {meta_path}. Run `cocreator pack` first.", err=True)
+    if not videos_dir.exists():
+        typer.echo(f"Videos directory not found: {videos_dir}", err=True)
         raise typer.Exit(1)
-    samples_meta = json.loads(meta_path.read_text())
+
+    chain_files = sorted(
+        f for f in chains_dir.glob("*.json") if f.name != "progress.json"
+    )
+    sample_ids = sorted(d.name for d in videos_dir.iterdir() if d.is_dir())
+
+    samples_meta = {}
+    for sid in sample_ids:
+        idx = int(sid) - 1
+        if idx >= len(chain_files):
+            continue
+        chain = json.loads(chain_files[idx].read_text())
+        event_num = _parse_frame_num(chain["event_frame_id"])
+        event_idx = sum(
+            1 for fid in chain["frame_ids"] if _parse_frame_num(fid) <= event_num
+        )
+        samples_meta[sid] = {
+            "id": sid,
+            "episode_id": chain["episode_id"],
+            "event_frame_id": chain["event_frame_id"],
+            "action_type": chain.get("action_type", "unknown"),
+            "num_frames": len(chain["frame_ids"]),
+            "event_idx": event_idx,
+        }
 
     html = _build_dataset_report(dataset_dir, samples_meta=samples_meta)
     (dataset_dir / "review.html").write_text(html, encoding="utf-8")

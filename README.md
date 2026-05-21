@@ -2,13 +2,15 @@
 
 驾驶场景因果关系数据集构建框架。
 
+[![HuggingFace Dataset](https://img.shields.io/badge/🤗-NIyueeE%2Fcocreator--driving--scene-blue)](https://huggingface.co/datasets/NIyueeE/cocreator-driving-scene)
+
 ## 项目简介
 
 CoCreator 是一个面向驾驶场景的**因果关系数据集构建框架**，通过三阶段流水线从原始驾驶数据自动构建高质量因果推理数据集：
 
 1. **detect** — 从位置/速度数据中检测异常事件（急刹、加速、转向）
 2. **reason** — 两阶段 VLM 分析（历史帧预测 → 未来帧验证）生成因果链
-3. **pack** — 将因果链打包为 HuggingFace 兼容的训练数据集 + HTML 报告
+3. **pack** — 将因果链打包为因果文本 + 帧图像 + HTML 报告
 
 ## 快速开始
 
@@ -59,9 +61,11 @@ cocreator detect -c config.yaml
 # 2. 因果推理
 cocreator reason -c config.yaml
 
-# 3. 打包数据集 + 浏览报告
+# 3. 打包数据集
 cocreator pack -c config.yaml
-cocreator pack review -c config.yaml   # 单独重新生成 review.html
+
+# 单独重新生成 review.html
+cocreator pack review -c config.yaml
 ```
 
 ## 使用指南
@@ -107,17 +111,17 @@ cocreator reason -c config.yaml --no-resume   # 从头重新处理
 
 ### pack — 打包数据集
 
-将因果链打包为 HuggingFace 格式的训练数据集，输出到 `{output_dir}/dataset/`。
+将因果链打包为帧图像 + 因果文本 + 浏览报告，输出到 `{output_dir}/dataset/`。
 
 ```bash
 cocreator pack -c config.yaml
 cocreator pack review -c config.yaml   # 重新生成 review.html
 ```
 
-| 子命令 | 说明 |
+| 命令 | 说明 |
 |--------|------|
-| `pack`（默认） | 打包：拷贝帧图像、生成因果文本、生成 HuggingFace 加载器、生成 review.html |
-| `pack review` | 单独重新生成 review.html（需已运行过 pack） |
+| `cocreator pack -c config.yaml` | 打包：拷贝帧图像、生成因果文本文件、生成 review.html |
+| `cocreator pack review -c config.yaml` | 单独重新生成 review.html（需已运行过 pack） |
 
 输出结构：
 
@@ -125,11 +129,25 @@ cocreator pack review -c config.yaml   # 重新生成 review.html
 {output_dir}/dataset/
 ├── videos/{sample_id}/   # 按顺序编号的帧图像（01.jpg, 02.jpg, ...）
 ├── causal/{sample_id}.txt  # 因果描述文本
-├── meta.json              # 样本元数据（事件帧位置、action_type 等）
-├── review.html            # 可浏览的 HTML 报告
-├── cocreator-dataset.py   # HuggingFace datasets 加载器
-└── README.md
+└── review.html            # 可浏览的 HTML 报告
 ```
+
+## 已发布的数据集
+
+经 CoCreator 流水线构建的预构建数据集已发布在 HuggingFace 上，可直接加载使用：
+
+- **数据集地址**: [NIyueeE/cocreator-driving-scene](https://huggingface.co/datasets/NIyueeE/cocreator-driving-scene)
+- **结构**: 每个样本包含帧图像序列 + 对应的因果描述文本
+- **规模**: 1k+ 样本，覆盖急刹、加速、转向等多种驾驶场景
+
+```python
+from datasets import load_dataset
+
+ds = load_dataset("NIyueeE/cocreator-driving-scene", split="train")
+# ds[0] -> {"id": "0001", "images": [...], "causal_text": "..."}
+```
+
+> 注意：本地 `cocreator pack` 输出的是 `dataset/videos/` + `dataset/causal/` 目录结构，并非 HuggingFace 数据集格式。如需本地加载，使用 HuggingFace `datasets` 库请直接引用上述远程数据集 ID。
 
 ## 配置说明
 
@@ -156,8 +174,8 @@ cocreator pack review -c config.yaml   # 重新生成 review.html
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `dataset_path` | 空 | action_info 目录（位置数据，用于事件检测） |
-| `videos_path` | 空 | 视频帧目录（JPEG 图像） |
+| `dataset_path` | **必填** | action_info 目录（位置数据，用于事件检测） |
+| `videos_path` | **必填** | 视频帧目录（JPEG 图像） |
 | `output_dir` | `./output` | 所有输出文件的根目录 |
 | `history_frames` | 7 | 事件前（含事件帧）提取的帧数 |
 | `future_frames` | 11 | 事件后提取的帧数 |
@@ -201,7 +219,7 @@ cocreator pack review -c config.yaml   # 重新生成 review.html
 
 ```
 src/cocreator/
-├── cli.py                       # 3 CLI 命令：detect, reason, pack
+├── cli.py                       # 4 CLI 命令：detect, reason, pack, pack review
 ├── config.py                    # YAML 加载 + ${ENV_VAR} 递归替换
 ├── schemas.py                   # Pydantic 数据模型
 ├── pipeline/
@@ -209,8 +227,6 @@ src/cocreator/
 │   ├── extractor.py             # 视频帧提取（严格时间隔离）
 │   ├── reasoner.py              # 两阶段 VLM 因果推理
 │   └── progress_tracker.py      # 断点续跑（原子写入）
-├── providers/
-│   └── openai_compatible.py     # 异步 VLM 客户端（信号量 + 重试）
-└── prompts/
-    └── __init__.py              # Jinja2 模板（遗留，reasoner 未使用）
+└── providers/
+    └── openai_compatible.py     # 异步 VLM 客户端（信号量 + 重试）
 ```

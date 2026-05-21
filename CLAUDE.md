@@ -26,6 +26,7 @@ CoCreator is a driving scene event detection and causal inference tool. Three-st
 | `cocreator detect -c config.yaml` | Run event detection |
 | `cocreator reason -c config.yaml` | Run causal reasoning |
 | `cocreator pack -c config.yaml` | Pack chains into training dataset |
+| `cocreator pack review -c config.yaml` | Regenerate review HTML report from packed dataset |
 
 ## Project Structure
 
@@ -73,7 +74,7 @@ YAML supports `${ENV_VAR}` substitution. Works with any OpenAI-compatible API (S
 
 ## Important Notes
 
-- PipelineConfig uses `history_frames`/`future_frames` (not segment-based naming - the README example with `history_segments`/`frames_per_segment` is outdated)
+- PipelineConfig uses `history_frames`/`future_frames` (not segment-based naming — the README example with `history_segments`/`frames_per_segment` is outdated)
 - `DetectedEvent` and `CausalChain` have `extra="forbid"` — no extra fields allowed
 - Response format uses OpenAI SDK `json_schema` structured outputs (no manual parsing)
 - Provider disables HTTP connection pooling (`max_keepalive_connections=0`) to avoid pool-related hangs

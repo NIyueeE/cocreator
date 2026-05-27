@@ -2,12 +2,12 @@
 
 Covers format helpers and multi-turn Stage 2 flow.
 """
-from cocreator.schemas import HistoricalAnalysis, FutureConfirmation, KeyObject, DetectedEvent
+from cocreator.schemas import HistoricalAnalysis, FutureConfirmation, DetectedEvent
 
 
 class TestCausalReasonerLogic:
     def test_format_history_as_assistant(self):
-        """Assistant reply should be first-person with key objects."""
+        """Assistant reply should combine description and prediction."""
         from cocreator.pipeline.reasoner import CausalReasoner
         from unittest.mock import MagicMock
 
@@ -16,17 +16,11 @@ class TestCausalReasonerLogic:
             extractor=MagicMock(),
             pipeline_config=MagicMock(),
         )
-        obj = KeyObject(type="pedestrian", location="crosswalk", threat_level="high")
         history = HistoricalAnalysis(
-            ego_status="cruising",
-            key_objects=[obj],
-            most_critical_object=obj,
-            predicted_action="brake",
-            reasoning="Pedestrian detected on crosswalk.",
+            description_text="I am driving in the left lane approaching an intersection. "
+                             "A pedestrian is waiting at the crosswalk ahead.",
+            predict_action="hard_brake",
         )
         text = reasoner._format_history_as_assistant(history)
-        assert "I see the ego vehicle is cruising" in text
-        assert "pedestrian at crosswalk" in text
-        assert "I predict I will brake" in text
-        # reasoning should NOT be in assistant text (snake_case noise)
-        assert "Pedestrian detected" not in text
+        assert "pedestrian" in text
+        assert "intend to hard_brake" in text

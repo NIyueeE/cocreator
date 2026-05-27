@@ -5,6 +5,7 @@ CoCreator CLI - Driving scenario event detection and causal inference.
 import asyncio
 import base64
 import concurrent.futures
+import io
 import json
 import os
 import random
@@ -14,6 +15,9 @@ from pathlib import Path
 from typing import List, Optional
 
 import typer
+import pyarrow as pa
+import pyarrow.parquet as pq
+from PIL import Image
 from rich.progress import (
     BarColumn,
     Progress,
@@ -23,6 +27,8 @@ from rich.progress import (
 )
 
 from .config import load_config
+from .providers.openai_compatible import read_raw
+from .pipeline.reasoner import IDENTITY as SYSTEM_PROMPT
 from .schemas import AppConfig, DetectedEvent
 from .pipeline.detector import EventDetector
 from .pipeline.extractor import VideoFrameExtractor
@@ -84,6 +90,7 @@ def detect(
         raise typer.Exit(1)
 
     all_events = []
+    error_count = 0
     max_workers = min(16, os.cpu_count() or 1)
     active_lock = threading.Lock()
     active_count = 0
@@ -125,15 +132,16 @@ def detect(
                         task,
                         advance=1,
                         active=f"{active_count}/{max_workers}",
-                        info=f"{ep_id[:32]}… {len(events)} events",
                     )
                 except Exception:
+                    error_count += 1
                     progress.update(
                         task,
                         advance=1,
                         active=f"{active_count}/{max_workers}",
-                        info=f"{ep_id[:32]}… error",
                     )
+
+    typer.echo(f"  ✓ {len(all_events)} events detected ({error_count} errors)")
 
     # Write individual JSON files (atomic: .tmp + rename)
     events_dir.mkdir(parents=True, exist_ok=True)
@@ -299,6 +307,42 @@ def reason(
 
 
 # ---------------------------------------------------------------------------
+# GIF generation helpers
+# ---------------------------------------------------------------------------
+
+
+def _generate_gif(frame_paths: list[Path], output_path: Path, event_idx: int, duration: int = 400) -> None:
+    """Generate an animated GIF with colored frame borders.
+
+    History frames (< event_idx) get blue borders, future frames (>= event_idx) get green borders.
+    Each frame is preprocessed exactly like API calls (read_raw).
+    """
+    frames = []
+    for fi, fpath in enumerate(frame_paths):
+        if not fpath.exists():
+            continue
+        img_bytes = read_raw(str(fpath))
+        img = Image.open(io.BytesIO(img_bytes))
+        border_color = (74, 144, 217) if fi < event_idx else (76, 175, 80)
+        border_width = 6
+        new_w = img.width + 2 * border_width
+        new_h = img.height + 2 * border_width
+        bordered = Image.new("RGB", (new_w, new_h), border_color)
+        bordered.paste(img, (border_width, border_width))
+        frames.append(bordered)
+    if not frames:
+        return
+    frames[0].save(
+        output_path,
+        save_all=True,
+        append_images=frames[1:],
+        duration=duration,
+        loop=0,
+        dither=Image.Dither.NONE,
+    )
+
+
+# ---------------------------------------------------------------------------
 # HTML report helpers
 # ---------------------------------------------------------------------------
 
@@ -347,13 +391,9 @@ def _build_dataset_report(dataset_dir: Path, samples_meta: Optional[dict] = None
   .chain-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
   .chain-header h2 { font-size: 15px; color: #1a1a2e; }
   .chain-header .badge { font-size: 11px; background: #e8ecf4; color: #555; padding: 2px 10px; border-radius: 10px; }
-  .frames { display: flex; flex-wrap: wrap; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
-  .frame { flex: 0 0 auto; text-align: center; }
-  .frame img { width: 140px; height: 105px; object-fit: cover; border-radius: 6px; border: 2px solid #ddd; display: block; }
-  .frame .label { font-size: 10px; color: #888; margin-top: 2px; }
-  .frame.history img { border-color: #4a90d9; }
-  .frame.future img { border-color: #4caf50; }
-  .event-marker { font-size: 12px; font-weight: 600; color: #e53935; margin: 8px 0; }
+  .gif-container { text-align: center; margin: 10px 0; }
+  .gif-container img { max-width: 100%; border-radius: 6px; display: inline-block; }
+  .gif-container .label { font-size: 11px; color: #888; margin-top: 4px; display: block; }
   .causal-text { font-size: 13.5px; line-height: 1.65; color: #333; background: #fafafa; padding: 12px 16px; border-radius: 8px; margin-top: 10px; max-height: 200px; overflow-y: auto; }
   .causal-text::before { content: "causal_text"; display: block; font-size: 11px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
 </style>
@@ -389,19 +429,13 @@ def _build_dataset_report(dataset_dir: Path, samples_meta: Optional[dict] = None
         parts.append(
             f'<div class="chain-header"><h2>Sample {sid}</h2><span class="badge">{num_frames} frames</span></div>'
         )
-        parts.append('<div class="frames">')
-
-        for fi in range(num_frames):
-            cls = "history" if fi < mid else "future"
-            is_event = fi == mid - 1
-            img_path = video_dir / f"{fi + 1:02d}.jpg"
-            src = _img_to_b64(img_path) if img_path.exists() else ""
-            label = "EVENT" if is_event else f"{fi + 1:02d}"
+        gif_path = video_dir / "animation.gif"
+        if gif_path.exists():
             parts.append(
-                f'<div class="frame {cls}"><img src="{src}" alt="frame {fi + 1}"><span class="label">{label}</span></div>'
+                f'<div class="gif-container"><img src="{_img_to_b64(gif_path)}" '
+                f'alt="animation"><span class="label">{num_frames} frames &middot; '
+                f'blue: history ({mid}) &middot; green: future ({num_frames - mid})</span></div>'
             )
-
-        parts.append("</div>")
         parts.append(f'<div class="causal-text">{causal_text}</div>')
         parts.append("</div>")
 
@@ -440,6 +474,19 @@ def pack(
     dataset_dir.mkdir(parents=True, exist_ok=True)
     videos_dir.mkdir(parents=True, exist_ok=True)
     causal_dir.mkdir(parents=True, exist_ok=True)
+    (dataset_dir / "simple").mkdir(parents=True, exist_ok=True)
+
+    # Clean up orphan video directories from previous runs that no longer have chain files
+    expected_ids = {f"{idx + 1:04d}" for idx in range(len(chain_files))}
+    for d in sorted(videos_dir.iterdir()):
+        if d.is_dir() and d.name not in expected_ids:
+            shutil.rmtree(d, ignore_errors=True)
+    for p in sorted(causal_dir.iterdir()):
+        if p.is_file() and p.stem not in expected_ids:
+            p.unlink()
+    for p in sorted((dataset_dir / "simple").iterdir()):
+        if p.is_file() and p.stem not in expected_ids:
+            p.unlink()
 
     meta = []
     errors = []
@@ -472,6 +519,7 @@ def pack(
             frame_ids = chain["frame_ids"]
             event_frame_id = chain["event_frame_id"]
             causal_text = chain["causal_text"]
+            simple_text = chain.get("simple_text", "")
             event_num = _parse_frame_num(event_frame_id)
             event_idx = sum(1 for fid in frame_ids if _parse_frame_num(fid) < event_num)
 
@@ -494,6 +542,8 @@ def pack(
                 shutil.copy2(matches[0], dst)
 
             (causal_dir / f"{sample_id}.txt").write_text(causal_text, encoding="utf-8")
+            if simple_text:
+                (dataset_dir / "simple" / f"{sample_id}.txt").write_text(simple_text, encoding="utf-8")
             return {
                 "id": sample_id,
                 "episode_id": episode_id,
@@ -520,7 +570,6 @@ def pack(
                         task,
                         advance=1,
                         active=f"{active_count}/{max_workers}",
-                        info=f"{error[:20]}… missing",
                     )
                 else:
                     meta.append(result)
@@ -528,13 +577,23 @@ def pack(
                         task,
                         advance=1,
                         active=f"{active_count}/{max_workers}",
-                        info=f"{result['id']}… ✓",
                     )
 
     samples_meta = {m["id"]: m for m in meta}
+
+    # Generate animated GIF with blue/green borders per frame
+    for m in meta:
+        sample_id = m["id"]
+        event_idx = m["event_idx"]
+        video_dir = videos_dir / sample_id
+        all_files = sorted(video_dir.glob("*.jpg"))
+        if all_files:
+            _generate_gif(all_files, video_dir / "animation.gif", event_idx)
+
     html = _build_dataset_report(dataset_dir, samples_meta=samples_meta)
     (dataset_dir / "review.html").write_text(html, encoding="utf-8")
 
+    typer.echo(f"  ✓ {len(meta)}/{len(chain_files)} packed ({len(errors)} errors)")
     typer.secho(f"✓ Packed {len(meta)} samples → {dataset_dir}/", fg=typer.colors.GREEN)
     if errors:
         typer.echo(f"  {len(errors)} warnings:", err=True)
@@ -589,6 +648,108 @@ def review(
     html = _build_dataset_report(dataset_dir, samples_meta=samples_meta)
     (dataset_dir / "review.html").write_text(html, encoding="utf-8")
     typer.secho(f"✓ Review report → {dataset_dir}/review.html", fg=typer.colors.GREEN)
+
+
+@pack_app.command()
+def convert(
+    ctx: typer.Context,
+) -> None:
+    """Convert packed dataset to Hugging Face Parquet format.
+
+    Reads the packed dataset (images + causal_text), preprocesses images
+    through the same pipeline as API calls, and shards into <1.5GB
+    Parquet files named train-0000*-of-*****.parquet.
+    """
+    config_obj: AppConfig = ctx.obj
+    output = Path(config_obj.pipeline.output_dir)
+    dataset_dir = output / "dataset"
+    parquet_dir = output / "dataset" / "parquet"
+
+    videos_dir = dataset_dir / "videos"
+    causal_dir = dataset_dir / "causal"
+    simple_dir = dataset_dir / "simple"
+
+    if not videos_dir.exists():
+        typer.echo(f"Dataset videos directory not found: {videos_dir}", err=True)
+        raise typer.Exit(1)
+
+    sample_ids = sorted(d.name for d in videos_dir.iterdir() if d.is_dir())
+    if not sample_ids:
+        typer.echo("No samples found in dataset", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Converting {len(sample_ids)} samples to Parquet...")
+
+    # Estimate per-sample size for shard planning
+    sample_sizes = []
+    for sid in sample_ids:
+        frame_files = list((videos_dir / sid).glob("*.jpg"))
+        total = sum(f.stat().st_size for f in frame_files)
+        causal_path = causal_dir / f"{sid}.txt"
+        if causal_path.exists():
+            total += causal_path.stat().st_size
+        sample_sizes.append(total)
+
+    total_size = sum(sample_sizes)
+    target_shard = 1.5 * 1024 ** 3
+    num_shards = max(1, round(total_size / target_shard))
+
+    # Assign samples to shards (greedy fill)
+    shard_of = []
+    cur_shard = 0
+    cur_size = 0
+    for size in sample_sizes:
+        if cur_size + size > target_shard and cur_size > 0:
+            cur_shard += 1
+            cur_size = 0
+        shard_of.append(cur_shard)
+        cur_size += size
+
+    actual_shards = cur_shard + 1
+    typer.echo(f"  Total: {total_size / 1024**3:.2f}GB, splitting into {actual_shards} shard(s)")
+
+    parquet_dir.mkdir(parents=True, exist_ok=True)
+    schema = pa.schema([
+        pa.field("id", pa.string()),
+        pa.field("video_frames", pa.list_(pa.binary())),
+        pa.field("system_prompt", pa.string()),
+        pa.field("causal_text", pa.string()),
+        pa.field("simple_text", pa.string()),
+    ])
+
+    for shard_idx in range(actual_shards):
+        shard_samples = [
+            sid for sid, s in zip(sample_ids, shard_of) if s == shard_idx
+        ]
+        rows = []
+        for sid in shard_samples:
+            causal_path = causal_dir / f"{sid}.txt"
+            causal_text = causal_path.read_text(encoding="utf-8") if causal_path.exists() else ""
+
+            frame_paths = sorted((videos_dir / sid).glob("*.jpg"))
+            video_frames = [read_raw(str(p)) for p in frame_paths]
+
+            rows.append({
+                "id": sid,
+                "video_frames": video_frames,
+                "system_prompt": SYSTEM_PROMPT,
+                "causal_text": causal_text,
+                "simple_text": (simple_dir / f"{sid}.txt").read_text(encoding="utf-8")
+                if (simple_dir / f"{sid}.txt").exists() else "",
+            })
+
+        table = pa.Table.from_pylist(rows, schema=schema)
+        filename = f"train-{shard_idx:05d}-of-{actual_shards:05d}.parquet"
+        pq.write_table(table, parquet_dir / filename, compression="snappy")
+        file_size = (parquet_dir / filename).stat().st_size
+        typer.echo(
+            f"  ✓ {filename} ({file_size / 1024**3:.2f}GB, {len(shard_samples)} samples)"
+        )
+
+    typer.secho(
+        f"✓ {len(sample_ids)} samples → {parquet_dir}/ ({actual_shards} shard(s))",
+        fg=typer.colors.GREEN,
+    )
 
 
 if __name__ == "__main__":

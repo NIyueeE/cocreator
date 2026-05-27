@@ -5,12 +5,26 @@ Async wrapper for OpenAI-compatible API endpoints with retry + concurrency contr
 
 import asyncio
 import base64
-from typing import Any, Optional
+import io
+from pathlib import Path
+from typing import Any, Optional, Union
 
 import httpx
 from openai import AsyncOpenAI
+from PIL import Image
 
 from ..schemas import RateLimitConfig, VLMConfig
+
+
+def read_raw(path: Union[str, Path]) -> bytes:
+    """Open image, resize to 960×540, JPEG quality 85 — matches API preprocessing."""
+    with open(path, "rb") as f:
+        img = Image.open(f)
+        img = img.convert("RGB")
+        img_resized = img.resize((960, 540), Image.BICUBIC)
+        buf = io.BytesIO()
+        img_resized.save(buf, format="JPEG", quality=85)
+        return buf.getvalue()
 
 
 def retry_with_backoff(
@@ -67,7 +81,6 @@ class OpenAICompatibleProvider:
             api_key=vlm_config.api_key,
             http_client=http_client,
         )
-        self._semaphore = asyncio.Semaphore(rate_limit_config.concurrency)
 
     @retry_with_backoff(max_attempts=3, backoff_factor=2.0, initial_delay=1.0)
     async def chat(
@@ -87,16 +100,17 @@ class OpenAICompatibleProvider:
         Returns:
             The VLM's response text
         """
-        async with self._semaphore:
-            create_kwargs: dict[str, Any] = {
-                "model": self.vlm_config.model,
-                "messages": messages,
-                **kwargs,
-            }
-            if response_format is not None:
-                create_kwargs["response_format"] = response_format
-            response = await self._client.chat.completions.create(**create_kwargs)
-            return response.choices[0].message.content or ""
+        create_kwargs: dict[str, Any] = {
+            "model": self.vlm_config.model,
+            "messages": messages,
+            **kwargs,
+        }
+        if self.vlm_config.enable_thinking:
+            create_kwargs["extra_body"] = {"enable_thinking": True}
+        if response_format is not None:
+            create_kwargs["response_format"] = response_format
+        response = await self._client.chat.completions.create(**create_kwargs)
+        return response.choices[0].message.content or ""
 
     async def chat_with_images(
         self,
@@ -105,23 +119,14 @@ class OpenAICompatibleProvider:
         response_format: Optional[dict[str, Any]] = None,
         **kwargs,
     ) -> str:
-        image_contents = []
-        for i, image_path in enumerate(image_paths):
-
-            def read_raw(path: str) -> bytes:
-                with open(path, "rb") as f:
-                    return f.read()
-
-            image_bytes = await asyncio.to_thread(read_raw, image_path)
+        async def _load(path: str) -> dict:
+            image_bytes = await asyncio.to_thread(read_raw, path)
             image_data = base64.b64encode(image_bytes).decode("utf-8")
-            image_contents.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{image_data}"},
-                }
-            )
+            return {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}}
 
-        if messages and isinstance(messages[-1].get("content"), str):
+        image_contents = await asyncio.gather(*[_load(p) for p in image_paths])
+
+        if messages and isinstance(messages[-1].get("content"), str) and messages[-1]["content"].strip():
             text_content = messages[-1]["content"]
             content_array = [*image_contents, {"type": "text", "text": text_content}]
             messages_with_images = messages[:-1] + [

@@ -9,7 +9,6 @@ from cocreator.schemas import (
     DetectedEvent,
     FutureConfirmation,
     HistoricalAnalysis,
-    KeyObject,
     PipelineConfig,
     RateLimitConfig,
     VLMConfig,
@@ -70,34 +69,21 @@ def test_detected_event_no_extra_fields():
         )
 
 
-def test_key_object_creation():
-    obj = KeyObject(type="pedestrian", location="crosswalk", threat_level="high")
-    assert obj.type == "pedestrian"
-    assert obj.threat_level == "high"
-
-
 def test_historical_analysis_creation():
-    obj = KeyObject(type="pedestrian", location="crosswalk", threat_level="high")
     analysis = HistoricalAnalysis(
-        ego_status="cruising",
-        key_objects=[obj],
-        most_critical_object=obj,
-        predicted_action="brake",
-        reasoning="Pedestrian detected at crosswalk",
+        description_text="I am driving in the left lane approaching an intersection. "
+                         "A pedestrian is waiting at the crosswalk ahead.",
+        predict_action="hard_brake",
     )
-    assert analysis.ego_status == "cruising"
-    assert len(analysis.key_objects) == 1
-    assert analysis.predicted_action == "brake"
+    assert "pedestrian" in analysis.description_text
+    assert analysis.predict_action == "hard_brake"
 
 
 def test_future_confirmation_creation():
     confirmation = FutureConfirmation(
-        actual_action="brake",
-        action_status="completed",
-        related_to_history=True,
+        causal_text="The ego vehicle braked due to a pedestrian at crosswalk.",
     )
-    assert confirmation.actual_action == "brake"
-    assert confirmation.related_to_history is True
+    assert confirmation.causal_text
 
 
 def test_causal_chain_creation():
@@ -105,10 +91,12 @@ def test_causal_chain_creation():
         episode_id="ep001",
         event_frame_id="frame_100",
         frame_ids=["0090", "0095", "0105", "0110"],
+        action_type="hard_brake",
         causal_text="The ego vehicle was cruising. It predicted brake.",
     )
     assert chain.episode_id == "ep001"
     assert chain.frame_ids == ["0090", "0095", "0105", "0110"]
+    assert chain.action_type == "hard_brake"
     assert chain.causal_text
 
 
@@ -117,10 +105,12 @@ def test_causal_chain_json_serialization():
         episode_id="ep001",
         event_frame_id="frame_100",
         frame_ids=["0090", "0095"],
+        action_type="acceleration",
         causal_text="The ego vehicle was cruising.",
     )
     json_str = chain.model_dump_json()
     assert "ep001" in json_str
+    assert "action_type" in json_str
     assert "cruising" in json_str
     assert "0090" in json_str
 

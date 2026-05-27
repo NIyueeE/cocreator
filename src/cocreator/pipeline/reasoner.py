@@ -4,6 +4,7 @@ Two-stage analysis: history analysis + future confirmation.
 Strict data isolation enforced between stages.
 """
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -12,7 +13,6 @@ from ..schemas import (
     CausalChain,
     HistoricalAnalysis,
     FutureConfirmation,
-    KeyObject,
     PipelineConfig,
 )
 from ..providers.openai_compatible import OpenAICompatibleProvider
@@ -27,169 +27,64 @@ _HISTORY_SCHEMA = {
         "schema": {
             "type": "object",
             "properties": {
-                "ego_status": {
+                "description_text": {
                     "type": "string",
-                    "enum": [
-                        "cruising",
-                        "accelerating",
-                        "braking",
-                        "turning",
-                        "stopped",
-                        "lane_changing",
-                    ],
+                    "description": (
+                        "Complete narrative description of the driving scene. "
+                        "Describe road layout, traffic participants, spatial relationships, "
+                        "and current driving state in a coherent paragraph."
+                    ),
                 },
-                "key_objects": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "type": {
-                                "type": "string",
-                                "enum": [
-                                    "pedestrian",
-                                    "vehicle",
-                                    "traffic_light",
-                                    "cyclist",
-                                    "animal",
-                                    "other",
-                                ],
-                            },
-                            "location": {
-                                "type": "string",
-                                "enum": [
-                                    "ahead",
-                                    "behind",
-                                    "left",
-                                    "right",
-                                    "intersection",
-                                    "crosswalk",
-                                    "road_edge",
-                                ],
-                            },
-                            "threat_level": {
-                                "type": "string",
-                                "enum": ["high", "medium", "low"],
-                            },
-                        },
-                        "required": ["type", "location", "threat_level"],
-                        "additionalProperties": False,
-                    },
-                },
-                "most_critical_object": {
-                    "anyOf": [
-                        {
-                            "type": "object",
-                            "properties": {
-                                "type": {
-                                    "type": "string",
-                                    "enum": [
-                                        "pedestrian",
-                                        "vehicle",
-                                        "traffic_light",
-                                        "cyclist",
-                                        "animal",
-                                        "other",
-                                    ],
-                                },
-                                "location": {
-                                    "type": "string",
-                                    "enum": [
-                                        "ahead",
-                                        "behind",
-                                        "left",
-                                        "right",
-                                        "intersection",
-                                        "crosswalk",
-                                        "road_edge",
-                                    ],
-                                },
-                                "threat_level": {
-                                    "type": "string",
-                                    "enum": ["high", "medium", "low"],
-                                },
-                            },
-                            "required": ["type", "location", "threat_level"],
-                            "additionalProperties": False,
-                        },
-                        {"type": "null"},
-                    ],
-                },
-                "predicted_action": {
+                "predict_action": {
                     "type": "string",
-                    "enum": [
-                        "brake",
-                        "accelerate",
-                        "lane_change_left",
-                        "lane_change_right",
-                        "maintain_speed",
-                        "stop",
-                    ],
+                    "enum": ["hard_brake", "steering", "acceleration", "maintain"],
                 },
-                "reasoning": {"type": "string"},
             },
-            "required": [
-                "ego_status",
-                "key_objects",
-                "most_critical_object",
-                "predicted_action",
-                "reasoning",
-            ],
+            "required": ["description_text", "predict_action"],
             "additionalProperties": False,
         },
     },
 }
 
-_FUTURE_SCHEMA = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "future_confirmation",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "causal_text": {
-                    "type": "string",
-                    "description": "Complete causal description combining what was predicted and what actually happened.",
-                },
-                "actual_action": {
-                    "type": "string",
-                    "enum": [
-                        "brake",
-                        "accelerate",
-                        "lane_change_left",
-                        "lane_change_right",
-                        "maintain_speed",
-                        "stop",
-                        "none",
-                    ],
-                },
-                "action_status": {
-                    "type": "string",
-                    "enum": ["completed", "in_progress", "aborted", "none"],
-                },
-                "related_to_history": {"type": "boolean"},
-                "verification_notes": {"type": "string"},
-            },
-            "required": [
-                "causal_text",
-                "actual_action",
-                "action_status",
-                "related_to_history",
-                "verification_notes",
-            ],
-            "additionalProperties": False,
-        },
-    },
-}
+IDENTITY = (
+    "You are the driver of this vehicle, actively operating it in real traffic. "
+    "You are not a passenger or external observer. "
+    "Images from user are your visual perception — your own eyes looking at the road ahead. "
+    "This is your real-time first-person view of the driving environment. "
+    "Always respond as the driver, in first person, based on what you see."
+)
 
-_SYSTEM_MESSAGE = {
-    "role": "system",
-    "content": (
-        "You are the driver of this vehicle. You see the road ahead, the traffic around you, "
-        "and you make decisions based on what you observe. Your task is to explain what you saw, "
-        "what you did, and why."
-    ),
-}
+SYSTEM_PROMPT_HISTORY = (
+    f"{IDENTITY}\n\n"
+    "Describe your current driving scene in detail, including road layout, "
+    "traffic participants, spatial relationships, and your driving state. "
+    "Then predict what action you will take next."
+)
+
+SYSTEM_PROMPT_FUTURE = (
+    f"{IDENTITY}\n\n"
+    "Based on the images, describe the driving event. "
+    "Respond in order: first the initial driving scene in rich detail"
+    " (road layout, traffic participants, spatial relationships), "
+    "then what you intended to do and why, "
+    "then what actually happened and what action you took, "
+    "then why you drove that way. "
+    "Be thorough and specific — cover each part with a complete description."
+)
+
+SYSTEM_PROMPT_SIMPLE = (
+    f"{IDENTITY}\n\n"
+    "Based on the images, describe the driving event. "
+    "Respond in order: first the initial driving scene in rich detail"
+    " (road layout, traffic participants, spatial relationships), "
+    "then what actually happened and what action you took, "
+    "then why you drove that way. "
+    "Be thorough and specific — cover each part with a complete description."
+)
+
+_SYSTEM_MESSAGE_HISTORY = {"role": "system", "content": SYSTEM_PROMPT_HISTORY}
+_SYSTEM_MESSAGE_FUTURE = {"role": "system", "content": SYSTEM_PROMPT_FUTURE}
+_SYSTEM_MESSAGE_SIMPLE = {"role": "system", "content": SYSTEM_PROMPT_SIMPLE}
 
 
 class CausalReasoner:
@@ -238,10 +133,16 @@ class CausalReasoner:
         # Stage 1: Historical Analysis (frames BEFORE event)
         history_result = await self._analyze_history(history_paths, episode_id, event)
 
-        # Stage 2: Future Confirmation (frames AFTER event) + VLM-produced causal_text
-        future_result, causal_text = await self._confirm_future(
-            future_paths, episode_id, event, history_result
+        # Stage 2 + baseline run concurrently (independent of each other)
+        future_task = asyncio.create_task(
+            self._confirm_future(future_paths, episode_id, event, history_result)
         )
+        simple_task = asyncio.create_task(
+            self._analyze_simple(history_paths + future_paths, episode_id, event)
+        )
+
+        _, causal_text = await future_task
+        simple_text = await simple_task
 
         # Build final output
         frame_ids = self._build_frame_ids(history_paths, future_paths)
@@ -250,7 +151,9 @@ class CausalReasoner:
             episode_id=episode_id,
             event_frame_id=event.frame_id,
             frame_ids=frame_ids,
+            action_type=event.action_type,
             causal_text=causal_text,
+            simple_text=simple_text,
         )
 
     async def _analyze_history(
@@ -261,41 +164,19 @@ class CausalReasoner:
 
         STRICT: This method only looks at frames before event_frame_id.
         """
-        user_message = {
-            "role": "user",
-            "content": "Look at the road ahead. What do you see and what do you do?",
-        }
-
         response = await self.provider.chat_with_images(
             image_paths=frame_paths,
-            messages=[_SYSTEM_MESSAGE, user_message],
+            messages=[_SYSTEM_MESSAGE_HISTORY, {"role": "user", "content": ""}],
             response_format=_HISTORY_SCHEMA,
+            temperature=0.2,
+            max_tokens=16384,
         )
 
         result = json.loads(response)
-        key_objects = [
-            KeyObject(
-                type=o.get("type", "unknown"),
-                location=o.get("location", "unknown"),
-                threat_level=o.get("threat_level", "low"),
-            )
-            for o in result.get("key_objects", [])
-        ]
-
-        most_critical = result.get("most_critical_object")
-        if most_critical:
-            most_critical = KeyObject(
-                type=most_critical.get("type", "unknown"),
-                location=most_critical.get("location", "unknown"),
-                threat_level=most_critical.get("threat_level", "low"),
-            )
 
         return HistoricalAnalysis(
-            ego_status=result.get("ego_status", "unknown"),
-            key_objects=key_objects,
-            most_critical_object=most_critical,
-            predicted_action=result.get("predicted_action", event.action_type),
-            reasoning=result.get("reasoning", ""),
+            description_text=result.get("description_text", ""),
+            predict_action=result.get("predict_action", "maintain"),
         )
 
     async def _confirm_future(
@@ -317,46 +198,46 @@ class CausalReasoner:
         """
         stage1_assistant = {
             "role": "assistant",
-            "content": self._format_history_as_assistant(history_result),
-        }
-        stage2_user = {
-            "role": "user",
             "content": (
-                "Now look at the future frames. What actually happened? "
-                "Compare with your earlier understanding and write a complete "
-                "causal description of the driving scene."
+                f"{self._format_history_as_assistant(history_result)}\n"
+                f"However, the vehicle actually performed a {event.action_type}."
             ),
         }
 
         response = await self.provider.chat_with_images(
             image_paths=frame_paths,
-            messages=[_SYSTEM_MESSAGE, stage1_assistant, stage2_user],
-            response_format=_FUTURE_SCHEMA,
+            messages=[_SYSTEM_MESSAGE_FUTURE, stage1_assistant, {"role": "user", "content": ""}],
+            temperature=0.2,
+            max_tokens=16384,
         )
 
-        result = json.loads(response)
-        causal_text = result.get("causal_text", "")
-        return FutureConfirmation(
-            actual_action=result.get("actual_action", "none"),
-            action_status=result.get("action_status", "unknown"),
-            related_to_history=result.get("related_to_history", False),
-            verification_notes=result.get("verification_notes", ""),
-        ), causal_text
+        causal_text = response.strip()
+        return FutureConfirmation(causal_text=causal_text), causal_text
 
     def _format_history_as_assistant(self, history: HistoricalAnalysis) -> str:
         """Format Stage 1 analysis as a first-person assistant response."""
-        parts = [f"I see the ego vehicle is {history.ego_status}."]
-        if history.key_objects:
-            obj_descs = [
-                f"{o.type} at {o.location} ({o.threat_level} threat)"
-                for o in history.key_objects
-            ]
-            parts.append("Key objects: " + ", ".join(obj_descs) + ".")
-        if history.most_critical_object:
-            o = history.most_critical_object
-            parts.append(f"The most critical object is {o.type} at {o.location}.")
-        parts.append(f"I predict I will {history.predicted_action}.")
-        return " ".join(parts)
+        return (
+            f"{history.description_text}\n"
+            f"I intend to {history.predict_action}."
+        )
+
+    async def _analyze_simple(
+        self, frame_paths: list[str], episode_id: str, event: DetectedEvent
+    ) -> str:
+        """
+        Baseline: single-call analysis with ALL frames (no two-stage isolation).
+
+        Takes all frames (history + future) in one call and produces a unified
+        description of the driving scene and what happened.
+        """
+        response = await self.provider.chat_with_images(
+            image_paths=frame_paths,
+            messages=[_SYSTEM_MESSAGE_SIMPLE, {"role": "user", "content": ""}],
+            temperature=0.2,
+            max_tokens=16384,
+        )
+
+        return response.strip()
 
     def _build_frame_ids(
         self, history_paths: list[str], future_paths: list[str]
@@ -369,4 +250,4 @@ class CausalReasoner:
         return nums
 
 
-__all__ = ["CausalReasoner"]
+__all__ = ["CausalReasoner", "IDENTITY", "SYSTEM_PROMPT_HISTORY", "SYSTEM_PROMPT_FUTURE", "SYSTEM_PROMPT_SIMPLE"]

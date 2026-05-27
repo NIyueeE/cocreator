@@ -59,13 +59,14 @@ class TestEventDetector:
         """Sharp direction change should produce a steering event."""
         episode_dir = tmp_path / "steer"
         episode_dir.mkdir()
-        positions = [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [2.0, 0.0, 0.0],
-            [2.0, 5.0, 0.0],  # sharp turn
-            [2.0, 10.0, 0.0],
-        ]
+        # Need at least 2*W+1 = 11 frames for curvature detection
+        # Go forward straight then curve right
+        positions = []
+        for i in range(6):
+            positions.append([0.0, 0.0, 2.0])
+        for i in range(6, 12):
+            t = i - 6
+            positions.append([t * 0.5, t * 0.3, 2.0])
         for i, pos in enumerate(positions):
             f = episode_dir / f"{i:04d}_next_frame_position_at_current_camera.txt"
             f.write_text(f"[{pos[0]}  {pos[1]}  {pos[2]}]")

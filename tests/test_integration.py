@@ -141,6 +141,7 @@ class TestCausalChainSerialization:
             episode_id="ep001",
             event_frame_id="frame_050",
             frame_ids=["0040", "0045"],
+            action_type="hard_brake",
             causal_text="The ego vehicle was cruising. A pedestrian at crosswalk was detected.",
         )
 

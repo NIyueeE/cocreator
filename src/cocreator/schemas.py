@@ -18,12 +18,14 @@ class VLMConfig(BaseModel):
         api_key: API key for authentication.
         model: Model identifier for the VLM.
         timeout: Request timeout in seconds.
+        enable_thinking: Enable thinking mode for supported models (e.g., Qwen).
     """
 
     base_url: str = "https://api.siliconflow.cn"
     api_key: str = ""
     model: str = "Qwen/Qwen3.5-397B-A17B"
     timeout: float = 120.0
+    enable_thinking: bool = False
 
 
 class RateLimitConfig(BaseModel):
@@ -66,7 +68,8 @@ class PipelineConfig(BaseModel):
     retry_max_attempts: int = 3
     retry_backoff_factor: float = 2.0
     min_event_interval: int = 5
-    steering_threshold: float = 15.0
+    steering_threshold: float = 13.0
+    min_steering_speed: float = 0.5
     merge_adjacent_events: bool = True
 
 
@@ -118,34 +121,24 @@ class HistoricalAnalysis(BaseModel):
     """Stage 1 output: Analysis of historical frames leading to event.
 
     Attributes:
-        ego_status: Ego vehicle status (e.g., "cruising", "turning", "stopped").
-        key_objects: List of objects of interest in the scene.
-        most_critical_object: The most critical object if identified.
-        predicted_action: Predicted action the ego vehicle will take.
-        reasoning: Natural language reasoning for the analysis.
+        description_text: Complete narrative description of the driving scene,
+            including road layout, traffic participants, spatial relationships,
+            and current vehicle state.
+        predict_action: Predicted action the ego vehicle will take.
     """
 
-    ego_status: str
-    key_objects: list[KeyObject]
-    most_critical_object: Optional[KeyObject] = None
-    predicted_action: str
-    reasoning: str = ""
+    description_text: str
+    predict_action: str
 
 
 class FutureConfirmation(BaseModel):
-    """Stage 2 output: Confirmation from future frames.
+    """Stage 2 output: Causal description from future frames.
 
     Attributes:
-        actual_action: The actual action observed in future frames.
-        action_status: Status of the action (e.g., "completed", "in_progress", "aborted").
-        related_to_history: Whether the action confirms the historical prediction.
-        verification_notes: Additional notes on verification.
+        causal_text: Complete causal description of what happened and why.
     """
 
-    actual_action: str
-    action_status: str
-    related_to_history: bool
-    verification_notes: str = ""
+    causal_text: str = ""
 
 
 class CausalChain(BaseModel):
@@ -155,12 +148,16 @@ class CausalChain(BaseModel):
         episode_id: Unique identifier for the driving episode.
         event_frame_id: Frame identifier of the detected event.
         frame_ids: All frame numbers used for analysis (history + future, chronological).
+        action_type: Type of detected action (e.g., "hard_brake", "steering").
         causal_text: VLM-produced causal description combining prediction and outcome.
+        simple_text: Baseline single-call VLM description (no two-stage isolation).
     """
 
     episode_id: str
     event_frame_id: str
     frame_ids: list[str]
+    action_type: str
     causal_text: str
+    simple_text: str = ""
 
     model_config = {"extra": "forbid"}

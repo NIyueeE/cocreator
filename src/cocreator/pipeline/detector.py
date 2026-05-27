@@ -39,6 +39,7 @@ class EventDetector:
         self.threshold = config.anomaly_threshold
         self.min_interval = config.min_event_interval
         self.steering_threshold = config.steering_threshold
+        self.min_steering_speed = config.min_steering_speed
         self.merge_adjacent = config.merge_adjacent_events
 
     def detect(self, episode_id: str) -> list[DetectedEvent]:
@@ -109,11 +110,15 @@ class EventDetector:
         return np.array(positions), frame_ids
 
     def _compute_velocities(self, positions: np.ndarray) -> np.ndarray:
-        """Compute velocity magnitude at each step."""
-        if len(positions) < 2:
+        """Compute speed magnitude.
+
+        Position files store ego-motion (frame-to-frame displacement vectors).
+        Speed is the magnitude of each displacement vector directly,
+        not the diff of positions.
+        """
+        if len(positions) < 1:
             return np.array([])
-        diffs = np.diff(positions, axis=0)
-        return np.linalg.norm(diffs, axis=1)
+        return np.linalg.norm(positions, axis=1)
 
     def _compute_accelerations(self, velocities: np.ndarray) -> np.ndarray:
         """Compute acceleration (change in velocity)."""
@@ -123,41 +128,59 @@ class EventDetector:
 
     def _compute_direction_changes(self, positions: np.ndarray) -> np.ndarray:
         """
-        Compute direction changes (steering angles) between consecutive segments.
+        Detect steering via trajectory curvature analysis.
+
+        Instead of computing noisy frame-to-frame direction angles, this method
+        fits a straight line to a sliding window of XY positions and measures
+        the deviation from linearity. Real turns produce systematic curvature
+        (large residual/path ratio); random noise cancels out over the window.
 
         Returns:
-            Array of angular changes in degrees
+            Array of curvature-derived angles in degrees (0 = straight).
         """
         if len(positions) < 3:
             return np.array([])
 
-        # Compute direction vectors (velocity vectors)
-        directions = np.diff(positions, axis=0)  # (n-1, 3)
+        W = 5  # half-window: fits over 2W+1 = 11 frames
 
-        # Compute angles between consecutive direction vectors
-        angles = []
-        for i in range(len(directions) - 1):
-            v1 = directions[i]
-            v2 = directions[i + 1]
+        xy = positions[:, :2]
+        n = len(xy)
+        result = np.zeros(n - 2)
 
-            # Compute angle between vectors
-            norm1 = np.linalg.norm(v1)
-            norm2 = np.linalg.norm(v2)
+        for i in range(W, n - W):
+            segment = xy[i - W : i + W + 1]
+            t = np.arange(len(segment), dtype=float)
 
-            if norm1 < 1e-6 or norm2 < 1e-6:
-                # Vehicle is stationary, no meaningful direction
-                angles.append(0.0)
-                continue
+            # Fit line: x = a0 + a1*t, y = b0 + b1*t
+            A = np.column_stack([np.ones_like(t), t])
+            cx, *_ = np.linalg.lstsq(A, segment[:, 0], rcond=None)
+            cy, *_ = np.linalg.lstsq(A, segment[:, 1], rcond=None)
 
-            # Cosine of angle: cos(θ) = (v1·v2) / (|v1||v2|)
-            cos_angle = np.dot(v1, v2) / (norm1 * norm2)
-            # Clamp to avoid numerical errors
-            cos_angle = np.clip(cos_angle, -1.0, 1.0)
-            angle_rad = np.arccos(cos_angle)
-            angle_deg = np.degrees(angle_rad)
-            angles.append(angle_deg)
+            # RMS residual from the fitted straight line
+            x_fit = cx[0] + cx[1] * t
+            y_fit = cy[0] + cy[1] * t
+            residuals = np.sqrt(
+                (segment[:, 0] - x_fit) ** 2 + (segment[:, 1] - y_fit) ** 2
+            )
+            rms_residual = np.sqrt(np.mean(residuals ** 2))
 
-        return np.array(angles)
+            # Total path length travelled in this window
+            deltas = np.diff(segment, axis=0)
+            path_len = np.sum(np.linalg.norm(deltas, axis=1))
+
+            # Normalized curvature: rms_residual / path_len
+            # A straight line → ratio ≈ 0, a sharp turn → ratio ≫ 0
+            ratio = rms_residual / max(path_len, 1e-8)
+
+            # Convert ratio to an angle-like measure (degrees)
+            # For a circular arc: chord deviation ~ chord_length * (1 - cos(θ/2))
+            # Approximate: angle ≈ 2 * arcsin(ratio)
+            angle = np.degrees(2 * np.arcsin(np.clip(ratio, 0, 1)))
+
+            # Map to position i-1 (matching output indexing: direction_changes[i] → frame_idx = i+1)
+            result[i - 1] = angle
+
+        return result
 
     def _detect_all_events(
         self,
@@ -222,6 +245,11 @@ class EventDetector:
             if angle > self.steering_threshold:
                 # Frame index corresponds to i+1 (direction change at transition)
                 frame_idx = i + 1
+
+                # Skip steering events at very low speed (noise-dominated)
+                if frame_idx < len(velocities) and velocities[frame_idx] < self.min_steering_speed:
+                    continue
+
                 frame_id = (
                     frame_ids[frame_idx]
                     if frame_idx < len(frame_ids)
@@ -301,11 +329,10 @@ class EventDetector:
         # Priority: hard_brake > steering > acceleration
         priority = {"hard_brake": 3, "steering": 2, "acceleration": 1}
 
-        # Select action type with highest priority
-        best_event = max(cluster, key=lambda e: priority.get(e.action_type, 0))
-
-        # Use first event's frame_id
+        # frame_id = first frame in the cluster (marks the start of the maneuver)
+        # action_type = highest priority action in the cluster (most significant event)
         first_event = cluster[0]
+        best_event = max(cluster, key=lambda e: priority.get(e.action_type, 0))
 
         return DetectedEvent(
             episode_id=first_event.episode_id,

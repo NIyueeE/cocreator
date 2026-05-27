@@ -9,8 +9,8 @@
 CoCreator 是一个面向驾驶场景的**因果关系数据集构建框架**，通过三阶段流水线从原始驾驶数据自动构建高质量因果推理数据集：
 
 1. **detect** — 从位置/速度数据中检测异常事件（急刹、加速、转向）
-2. **reason** — 两阶段 VLM 分析（历史帧预测 → 未来帧验证）生成因果链
-3. **pack** — 将因果链打包为因果文本 + 帧图像 + HTML 报告
+2. **reason** — 两阶段 VLM 分析（历史帧预测 → 未来帧验证）+ 单轮 baseline 对照，生成因果链
+3. **pack** — 将因果链打包为帧图像 + 因果文本 + GIF 报告，并导出 HuggingFace Parquet 格式
 
 ## 快速开始
 
@@ -22,32 +22,29 @@ uv sync
 
 ### 配置环境
 
-创建 `config.yaml`（参考 `config.example.yaml`，或直接从环境变量配置）：
+创建 `config.yaml`（参考 `config.yaml`，或直接从环境变量配置）：
 
 ```yaml
 vlm:
   base_url: "https://api.siliconflow.cn"
   api_key: "${SILICONFLOW_API_KEY}"
   model: "Qwen/Qwen3.5-397B-A17B"
-  timeout: 120.0
 
 rate_limit:
   rpm: 500
-  tpm: 2000000
   concurrency: 20
 
 pipeline:
-  dataset_path: "/data/cocreator/action_info"
-  videos_path: "/data/cocreator/videos"
+  dataset_path: "/data/drivingdojo_sub/action_info"
+  videos_path: "/data/drivingdojo_sub/videos"
   output_dir: "./output"
-  history_frames: 7
-  future_frames: 11
+  history_frames: 21
+  future_frames: 33
   anomaly_threshold: 2.0
-  steering_threshold: 15.0
+  steering_threshold: 13
+  min_steering_speed: 0.5
   min_event_interval: 5
   merge_adjacent_events: true
-  retry_max_attempts: 3
-  retry_backoff_factor: 2.0
 ```
 
 环境变量 `${ENV_VAR}` 语法在配置文件中所有字段均支持。
@@ -58,14 +55,14 @@ pipeline:
 # 1. 事件检测
 cocreator detect -c config.yaml
 
-# 2. 因果推理
+# 2. 因果推理（两段式 + baseline 对照）
 cocreator reason -c config.yaml
 
 # 3. 打包数据集
 cocreator pack -c config.yaml
 
-# 单独重新生成 review.html
-cocreator pack review -c config.yaml
+# 4. 导出 HuggingFace Parquet 格式
+cocreator pack -c config.yaml convert
 ```
 
 ## 使用指南
@@ -84,11 +81,16 @@ cocreator detect -c config.yaml --episode-id ep001 --episode-id ep002
 | `-c, --config` | YAML 配置文件路径 |
 | `--episode-id` | 仅处理指定 episode（可重复） |
 
-检测算法：基于速度和加速度的统计异常检测（自适应阈值），以及方向变化的转向检测。相邻事件可合并去重。
+检测算法：基于速度和加速度的统计异常检测（自适应阈值），以及方向变化的滑动窗口曲率检测。转向检测过滤低速场景（`min_steering_speed`）。相邻事件可合并去重（优先级：hard_brake > steering > acceleration）。
 
 ### reason — 因果推理
 
-对检测到的事件进行两阶段 VLM 因果推理，输出 JSON 到 `{output_dir}/chains/`。
+对检测到的事件进行 VLM 因果推理，同时产出两种结果用于对照：
+
+- **causal_text**: 两段式推理（历史帧预测 → 未来帧验证，严格数据隔离）
+- **simple_text**: 单次 baseline 调用（所有帧一次性分析）
+
+输出 JSON 到 `{output_dir}/chains/`。
 
 ```bash
 cocreator reason -c config.yaml
@@ -104,33 +106,54 @@ cocreator reason -c config.yaml --no-resume   # 从头重新处理
 
 两阶段分析：
 
-1. **历史分析**：分析事件前的帧（含事件帧），预测自车行为
-2. **未来确认**：分析事件后的帧，验证预测并生成因果描述
+1. **历史分析**：分析事件前的帧，描述场景 + 预测自车行为
+2. **未来确认**：分析事件后的帧（含事件帧），结合检测器的 `action_type` 生成因果描述
 
 两阶段间严格数据隔离：第二阶段只看事件后帧，只接收第一阶段的文本摘要。
 
 ### pack — 打包数据集
 
-将因果链打包为帧图像 + 因果文本 + 浏览报告，输出到 `{output_dir}/dataset/`。
+将因果链打包为帧图像 + 因果文本 + 动画报告，输出到 `{output_dir}/dataset/`。
 
 ```bash
 cocreator pack -c config.yaml
-cocreator pack review -c config.yaml   # 重新生成 review.html
+cocreator pack -c config.yaml convert   # 导出 HuggingFace Parquet
+cocreator pack review -c config.yaml    # 重新生成 review.html
 ```
 
 | 命令 | 说明 |
 |--------|------|
-| `cocreator pack -c config.yaml` | 打包：拷贝帧图像、生成因果文本文件、生成 review.html |
+| `cocreator pack -c config.yaml` | 打包：拷贝帧图像、生成因果文本、生成 animation.gif + review.html |
+| `cocreator pack -c config.yaml convert` | 导出 HuggingFace Parquet 格式 |
 | `cocreator pack review -c config.yaml` | 单独重新生成 review.html（需已运行过 pack） |
 
 输出结构：
 
 ```
 {output_dir}/dataset/
-├── videos/{sample_id}/   # 按顺序编号的帧图像（01.jpg, 02.jpg, ...）
-├── causal/{sample_id}.txt  # 因果描述文本
-└── review.html            # 可浏览的 HTML 报告
+├── videos/{sample_id}/   # 原始帧图像（01.jpg, 02.jpg, ...）
+│              animation.gif    # 带蓝/绿边框的动画（历史蓝、未来绿）
+├── causal/{sample_id}.txt      # 两段式因果描述文本
+├── simple/{sample_id}.txt      # 单次 baseline 描述文本
+└── review.html                 # 可浏览的 HTML 报告（内嵌 GIF）
+
+{output_dir}/hf_dataset/
+└── train-00000-of-00001.parquet  # HuggingFace 格式数据集
 ```
+
+Parquet 格式：
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `id` | string | 样本 ID |
+| `video_frames` | list\<binary\> | 预处理后的帧图像列表（960×540 JPEG q85，与 VLM 调用一致） |
+| `system_prompt` | string | 系统提示词（与 reasoner 共享） |
+| `causal_text` | string | 两段式推理输出 |
+| `simple_text` | string | 单次 baseline 输出 |
+
+## 图片预处理
+
+所有传入 VLM 的图像经统一预处理：**1920×1080 → resize(960×540, BICUBIC) → save(JPEG, quality=85)**。此处理在 `read_raw()` 中实现，pack 的 GIF 生成和 Parquet 导出使用同一函数，保证训练数据与推理时所见一致。
 
 ## 已发布的数据集
 
@@ -147,7 +170,7 @@ ds = load_dataset("NIyueeE/cocreator-driving-scene", split="train")
 # ds[0] -> {"id": "0001", "images": [...], "causal_text": "..."}
 ```
 
-> 注意：本地 `cocreator pack` 输出的是 `dataset/videos/` + `dataset/causal/` 目录结构，并非 HuggingFace 数据集格式。如需本地加载，使用 HuggingFace `datasets` 库请直接引用上述远程数据集 ID。
+> 注意：本地 `cocreator pack convert` 输出的 `hf_dataset/` 即为 HuggingFace Datasets 兼容的 Parquet 格式，可直接 `load_dataset("parquet", data_files="*.parquet")` 加载。
 
 ## 配置说明
 
@@ -159,6 +182,7 @@ ds = load_dataset("NIyueeE/cocreator-driving-scene", split="train")
 | `api_key` | 空 | API 密钥，支持 `${ENV_VAR}` |
 | `model` | `Qwen/Qwen3.5-397B-A17B` | 模型名称 |
 | `timeout` | 120.0 | 请求超时（秒） |
+| `enable_thinking` | false | 启用思维链（Qwen 模型支持） |
 
 兼容任何 OpenAI 兼容 API（SiliconFlow、Ollama、Azure OpenAI 等）。
 
@@ -177,10 +201,11 @@ ds = load_dataset("NIyueeE/cocreator-driving-scene", split="train")
 | `dataset_path` | **必填** | action_info 目录（位置数据，用于事件检测） |
 | `videos_path` | **必填** | 视频帧目录（JPEG 图像） |
 | `output_dir` | `./output` | 所有输出文件的根目录 |
-| `history_frames` | 7 | 事件前（含事件帧）提取的帧数 |
-| `future_frames` | 11 | 事件后提取的帧数 |
+| `history_frames` | 21 | 事件前提取的帧数 |
+| `future_frames` | 33 | 事件后（含事件帧）提取的帧数 |
 | `anomaly_threshold` | 2.0 | 异常检测的标准差倍数 |
-| `steering_threshold` | 15.0 | 转向检测角度阈值（度） |
+| `steering_threshold` | 13 | 转向检测角度阈值（度） |
+| `min_steering_speed` | 0.5 | 转向检测最低速度（过滤静止时 XY 噪声） |
 | `min_event_interval` | 5 | 事件间最小帧间隔（去重） |
 | `merge_adjacent_events` | true | 是否合并相邻事件 |
 | `retry_max_attempts` | 3 | API 调用最大重试次数 |
@@ -209,24 +234,26 @@ ds = load_dataset("NIyueeE/cocreator-driving-scene", split="train")
   "episode_id": "ep001",
   "event_frame_id": "0037_position_at_current_camera",
   "frame_ids": ["0032", "0034", "0036", "0038", "0040", "0042"],
-  "causal_text": "The ego vehicle was cruising at a moderate speed when..."
+  "action_type": "hard_brake",
+  "causal_text": "I was driving in the left lane approaching a signalized intersection...",
+  "simple_text": "The scene takes place at night on a well-lit urban road..."
 }
 ```
 
-`frame_ids` 按时间序排列：历史帧（含事件帧）在前，未来帧在后。
+`frame_ids` 按时间序排列：历史帧在前，事件帧（首个未来帧）在后。
 
 ## 技术架构
 
 ```
 src/cocreator/
-├── cli.py                       # 4 CLI 命令：detect, reason, pack, pack review
+├── cli.py                       # CLI 命令：detect, reason, pack, pack review, pack convert
 ├── config.py                    # YAML 加载 + ${ENV_VAR} 递归替换
 ├── schemas.py                   # Pydantic 数据模型
 ├── pipeline/
 │   ├── detector.py              # 速度/加速度/转向异常检测
 │   ├── extractor.py             # 视频帧提取（严格时间隔离）
-│   ├── reasoner.py              # 两阶段 VLM 因果推理
+│   ├── reasoner.py              # 两阶段 VLM 因果推理 + single-call baseline
 │   └── progress_tracker.py      # 断点续跑（原子写入）
 └── providers/
-    └── openai_compatible.py     # 异步 VLM 客户端（信号量 + 重试）
+    └── openai_compatible.py     # 异步 VLM 客户端（信号量 + 重试 + 图片预处理）
 ```

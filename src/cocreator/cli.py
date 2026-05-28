@@ -242,6 +242,10 @@ def reason(
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TextColumn("{task.completed}/{task.total}"),
+            TextColumn(" • ✓ "),
+            TextColumn("{task.fields[success]}"),
+            TextColumn(" • ✗ "),
+            TextColumn("{task.fields[fails]}"),
             TextColumn(" • active "),
             TextColumn("{task.fields[active]}"),
             TimeElapsedColumn(),
@@ -249,13 +253,15 @@ def reason(
             TimeRemainingColumn(),
             transient=True,
         )
-        task = progress.add_task("Reasoning", total=total, active="0/0")
+        task = progress.add_task(
+            "Reasoning", total=total, success="0", fails="0", active="0/0"
+        )
 
         success_count = 0
-        errors = []
+        fail_count = 0
 
         async def process_one(event: DetectedEvent) -> None:
-            nonlocal active_count, success_count
+            nonlocal active_count, success_count, fail_count
             async with sem:
                 active_count += 1
                 progress.update(
@@ -276,8 +282,13 @@ def reason(
                         event.episode_id, event.frame_id
                     )
                     success_count += 1
+                    progress.update(task, success=str(success_count))
                 except Exception as e:
-                    errors.append((event.episode_id, event.frame_id, e))
+                    fail_count += 1
+                    progress.update(task, fails=str(fail_count))
+                    progress.console.print(
+                        f"  ✗ [{event.episode_id}:{event.frame_id}] {e}"
+                    )
                 finally:
                     active_count -= 1
                     progress.update(
@@ -292,11 +303,7 @@ def reason(
                 return_exceptions=True,
             )
 
-        # Print errors after gather (avoids interleaved output)
-        for ep_id, fr_id, e in errors:
-            typer.echo(f"  Error [{ep_id}/{fr_id}]: {e}", err=True)
-
-        typer.echo(f"  ✓ {success_count}/{total} completed")
+        typer.echo(f"  ✓ {success_count} succeeded, ✗ {fail_count} failed / {total} total")
 
         await provider.close()
 

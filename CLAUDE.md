@@ -21,10 +21,10 @@ CoCreator is a driving scene event detection and causal inference tool. Three-st
 | `ruff format .` | Format code |
 | `ruff check .` | Lint code |
 | `ruff check --fix .` | Lint and auto-fix |
-| `ty check src/cocreator/` | Type-check the package |
+| `ty check src/cocreator/` | Type-check the package (requires `ty` CLI installed separately) |
 | `cocreator --help` | Show CLI help (entry point: `cocreator = "cocreator.cli:app"`) |
-| `cocreator detect -c config.yaml` | Run event detection |
-| `cocreator reason -c config.yaml` | Run causal reasoning |
+| `cocreator detect -c config.yaml` | Run event detection (optionally `--episode-id` for specific episodes) |
+| `cocreator reason -c config.yaml` | Run causal reasoning (use `--no-resume` to force re-process) |
 | `cocreator pack -c config.yaml` | Pack chains into training dataset |
 | `cocreator pack review -c config.yaml` | Regenerate review HTML report from packed dataset |
 | `cocreator pack convert -c config.yaml` | Convert packed dataset to Hugging Face Parquet format |
@@ -61,7 +61,7 @@ tests/
 ## Key Design Decisions
 
 ### Strict Temporal Data Isolation
-History analysis gets only **pre-event** frames; future verification gets only **post-event** frames. `_validate_no_leakage()` uses `assert` (internal invariant, never remove). Stage 2 receives only the text summary from Stage 1, never frames.
+History analysis gets only **pre-event** frames; future verification gets only **post-event** frames. `VideoFrameExtractor.get_history_frames()` and `get_future_frames()` enforce temporal separation at the frame retrieval level. Stage 2 receives only the text summary from Stage 1, never frames.
 
 ### Two-Stage VLM Reasoning
 1. Analyze history frames → predict ego action
@@ -73,16 +73,25 @@ History analysis gets only **pre-event** frames; future verification gets only *
 ### Config
 YAML supports `${ENV_VAR}` substitution. Works with any OpenAI-compatible API (SiliconFlow, Ollama, Azure OpenAI, etc.). Config provider appends `/v1` suffix automatically if missing.
 
+## Environment
+
+Key environment variables (referenced in `config.yaml` via `${ENV_VAR}` syntax):
+
+| Variable | Purpose |
+|----------|---------|
+| `SILICONFLOW_API_KEY` | VLM API key (if using SiliconFlow backend) |
+
 ## Important Notes
 
 - PipelineConfig uses `history_frames`/`future_frames`
 - `DetectedEvent` and `CausalChain` have `extra="forbid"` — no extra fields allowed
 - Response format uses OpenAI SDK `json_schema` structured outputs (no manual parsing)
 - Provider disables HTTP connection pooling (`max_keepalive_connections=0`) to avoid pool-related hangs
-- Progress tracker writes to `.tmp` then renames for crash-safe persistence. Same pattern used for event/chain file output in CLI
-- CLI event/chain output uses atomic `.tmp` + rename writes for crash safety (same pattern as progress tracker)
+- Progress tracker, event files, and chain files all use atomic `.tmp` + rename writes for crash-safe persistence
 - Detector reads position data from `*_position_*.txt` files in `{dataset_path}/{episode_id}/`, parsing 3D vectors from bracket-delimited format like `[x y z]`
 - Extractor reads JPEG frames from `{videos_path}/{episode_id}/` and matches by numeric prefix in filename
 - Detect command uses `concurrent.futures.ThreadPoolExecutor` (CPU-bound); reason command uses `asyncio` with semaphore (I/O-bound VLM calls)
+- Reasoner runs Stage 2 (future confirmation) and baseline analysis concurrently via `asyncio.create_task` since they are independent
 - `pack` command copies frame images + causal text + generates `review.html` for browsing (no HuggingFace loader script — the prebuilt dataset is on HuggingFace at `NIyueeE/cocreator-driving-scene`)
 - `httpx[socks]` dependency enables proxy support for API calls
+- Provider credentials (`API_KEY`, `API_BASE_URL`) are set via environment variables referenced in the YAML config using `${ENV_VAR}` syntax — see config file template for available fields

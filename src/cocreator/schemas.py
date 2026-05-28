@@ -39,7 +39,7 @@ class RateLimitConfig(BaseModel):
 
     rpm: int = 500
     tpm: int = 2000000
-    concurrency: int = 20
+    concurrency: int = 3
 
 
 class PipelineConfig(BaseModel):

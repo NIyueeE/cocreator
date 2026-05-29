@@ -378,9 +378,10 @@ def _build_dataset_report(dataset_dir: Path, samples_meta: Optional[dict] = None
     sample_ids = sorted(d.name for d in videos_dir.iterdir() if d.is_dir())
     total = len(sample_ids)
 
-    # random sample
+    # uniform sample
     k = min(max_samples, total)
-    selected = random.sample(sample_ids, k)
+    step = total / k
+    selected = [sample_ids[round(i * step)] for i in range(k)]
 
     parts = []
     parts.append("""<!DOCTYPE html>
@@ -417,34 +418,50 @@ def _build_dataset_report(dataset_dir: Path, samples_meta: Optional[dict] = None
         f'<p class="subtitle">{total} total samples &middot; showing {len(selected)} samples &middot; {n_frames} frames per sample</p>'
     )
 
-    for sid in selected:
-        video_dir = dataset_dir / "videos" / sid
-        num_frames = len(list(video_dir.glob("*.jpg")))
-        causal_path = dataset_dir / "causal" / f"{sid}.txt"
-        causal_text = (
-            causal_path.read_text(encoding="utf-8") if causal_path.exists() else ""
-        )
+    progress = Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TextColumn(" • "),
+        TimeElapsedColumn(),
+        TextColumn("<"),
+        TimeRemainingColumn(),
+        transient=True,
+    )
+    task = progress.add_task("Generating review", total=len(selected))
 
-        # use actual event boundary from chain
-        if not samples_meta or sid not in samples_meta:
-            raise ValueError(f"Missing metadata for sample {sid}")
-        mid = samples_meta[sid].get("event_idx")
-        if mid is None:
-            raise ValueError(f"Missing event_idx in metadata for sample {sid}")
+    with progress:
+        for sid in selected:
+            video_dir = dataset_dir / "videos" / sid
+            num_frames = len(list(video_dir.glob("*.jpg")))
+            causal_path = dataset_dir / "causal" / f"{sid}.txt"
+            causal_text = (
+                causal_path.read_text(encoding="utf-8") if causal_path.exists() else ""
+            )
 
-        parts.append('<div class="chain">')
-        parts.append(
-            f'<div class="chain-header"><h2>Sample {sid}</h2><span class="badge">{num_frames} frames</span></div>'
-        )
-        gif_path = video_dir / "animation.gif"
-        if gif_path.exists():
+            # use actual event boundary from chain
+            if not samples_meta or sid not in samples_meta:
+                raise ValueError(f"Missing metadata for sample {sid}")
+            mid = samples_meta[sid].get("event_idx")
+            if mid is None:
+                raise ValueError(f"Missing event_idx in metadata for sample {sid}")
+
+            parts.append('<div class="chain">')
+            parts.append(
+                f'<div class="chain-header"><h2>Sample {sid}</h2><span class="badge">{num_frames} frames</span></div>'
+            )
+            # generate GIF on the fly from frame JPGs
+            frame_paths = sorted(video_dir.glob("*.jpg"))
+            gif_path = video_dir / "animation.gif"
+            _generate_gif(frame_paths, gif_path, mid)
             parts.append(
                 f'<div class="gif-container"><img src="{_img_to_b64(gif_path)}" '
                 f'alt="animation"><span class="label">{num_frames} frames &middot; '
                 f'blue: history ({mid}) &middot; green: future ({num_frames - mid})</span></div>'
             )
-        parts.append(f'<div class="causal-text">{causal_text}</div>')
-        parts.append("</div>")
+            parts.append(f'<div class="causal-text">{causal_text}</div>')
+            parts.append("</div>")
+            progress.update(task, advance=1)
 
     parts.append("</body></html>")
     return "\n".join(parts)
@@ -612,6 +629,7 @@ def pack(
 @pack_app.command()
 def review(
     ctx: typer.Context,
+    num_samples: int = typer.Option(7, "--num-samples", help="Number of samples to include in the review report"),
 ) -> None:
     """Regenerate review HTML report from an already-packed dataset."""
     config_obj: AppConfig = ctx.obj
@@ -652,7 +670,7 @@ def review(
             "event_idx": event_idx,
         }
 
-    html = _build_dataset_report(dataset_dir, samples_meta=samples_meta)
+    html = _build_dataset_report(dataset_dir, samples_meta=samples_meta, max_samples=num_samples)
     (dataset_dir / "review.html").write_text(html, encoding="utf-8")
     typer.secho(f"✓ Review report → {dataset_dir}/review.html", fg=typer.colors.GREEN)
 
@@ -685,35 +703,9 @@ def convert(
         typer.echo("No samples found in dataset", err=True)
         raise typer.Exit(1)
 
-    typer.echo(f"Converting {len(sample_ids)} samples to Parquet...")
-
-    # Estimate per-sample size for shard planning
-    sample_sizes = []
-    for sid in sample_ids:
-        frame_files = list((videos_dir / sid).glob("*.jpg"))
-        total = sum(f.stat().st_size for f in frame_files)
-        causal_path = causal_dir / f"{sid}.txt"
-        if causal_path.exists():
-            total += causal_path.stat().st_size
-        sample_sizes.append(total)
-
-    total_size = sum(sample_sizes)
-    target_shard = 1.5 * 1024 ** 3
-    num_shards = max(1, round(total_size / target_shard))
-
-    # Assign samples to shards (greedy fill)
-    shard_of = []
-    cur_shard = 0
-    cur_size = 0
-    for size in sample_sizes:
-        if cur_size + size > target_shard and cur_size > 0:
-            cur_shard += 1
-            cur_size = 0
-        shard_of.append(cur_shard)
-        cur_size += size
-
-    actual_shards = cur_shard + 1
-    typer.echo(f"  Total: {total_size / 1024**3:.2f}GB, splitting into {actual_shards} shard(s)")
+    NUM_SHARDS = 7
+    shard_of = [i * NUM_SHARDS // len(sample_ids) for i in range(len(sample_ids))]
+    actual_shards = NUM_SHARDS
 
     parquet_dir.mkdir(parents=True, exist_ok=True)
     schema = pa.schema([
@@ -724,34 +716,70 @@ def convert(
         pa.field("simple_text", pa.string()),
     ])
 
-    for shard_idx in range(actual_shards):
-        shard_samples = [
-            sid for sid, s in zip(sample_ids, shard_of) if s == shard_idx
-        ]
-        rows = []
-        for sid in shard_samples:
+    max_workers = min(16, os.cpu_count() or 1)
+    active_lock = threading.Lock()
+    active_count = 0
+
+    progress = Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TextColumn(" • active "),
+        TextColumn("{task.fields[active]}"),
+        TimeElapsedColumn(),
+        TextColumn("<"),
+        TimeRemainingColumn(),
+        transient=True,
+    )
+    task = progress.add_task("Converting", total=len(sample_ids), active="0/0")
+
+    def convert_one(sid: str) -> dict:
+        nonlocal active_count
+        with active_lock:
+            active_count += 1
+        try:
             causal_path = causal_dir / f"{sid}.txt"
             causal_text = causal_path.read_text(encoding="utf-8") if causal_path.exists() else ""
 
             frame_paths = sorted((videos_dir / sid).glob("*.jpg"))
             video_frames = [read_raw(str(p)) for p in frame_paths]
 
-            rows.append({
+            return {
                 "id": sid,
                 "video_frames": video_frames,
                 "system_prompt": SYSTEM_PROMPT,
                 "causal_text": causal_text,
                 "simple_text": (simple_dir / f"{sid}.txt").read_text(encoding="utf-8")
                 if (simple_dir / f"{sid}.txt").exists() else "",
-            })
+            }
+        finally:
+            with active_lock:
+                active_count -= 1
 
-        table = pa.Table.from_pylist(rows, schema=schema)
-        filename = f"train-{shard_idx:05d}-of-{actual_shards:05d}.parquet"
-        pq.write_table(table, parquet_dir / filename, compression="snappy")
-        file_size = (parquet_dir / filename).stat().st_size
-        typer.echo(
-            f"  ✓ {filename} ({file_size / 1024**3:.2f}GB, {len(shard_samples)} samples)"
-        )
+    with progress:
+        done = 0
+        for shard_idx in range(actual_shards):
+            shard_ids = [sid for sid, s in zip(sample_ids, shard_of) if s == shard_idx]
+
+            rows: list[dict] = []
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(convert_one, sid): sid for sid in shard_ids}
+                for future in concurrent.futures.as_completed(futures):
+                    sid = futures[future]
+                    try:
+                        rows.append(future.result())
+                    except Exception as e:
+                        typer.echo(f"  ✗ {sid}: {e}", err=True)
+                    done += 1
+                    progress.update(task, completed=done, active=str(active_count))
+
+            table = pa.Table.from_pylist(rows, schema=schema)
+            filename = f"train-{shard_idx:05d}-of-{actual_shards:05d}.parquet"
+            pq.write_table(table, parquet_dir / filename, compression="snappy")
+            file_size = (parquet_dir / filename).stat().st_size
+            typer.echo(
+                f"  ✓ {filename} ({file_size / 1024**3:.2f}GB, {len(rows)} samples)"
+            )
 
     typer.secho(
         f"✓ {len(sample_ids)} samples → {parquet_dir}/ ({actual_shards} shard(s))",
